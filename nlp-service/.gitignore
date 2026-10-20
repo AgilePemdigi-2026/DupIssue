@@ -1,0 +1,53 @@
+# Python bytecode and test/tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Local datasets and databases (may contain confidential issue data)
+data/
+datasets/
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.jsonl
+*.parquet
+
+# Downloaded/local NLP models and caches
+.cache/
+cache/
+models/
+model/
+model_cache/
+huggingface/
+transformers/
+*.safetensors
+pytorch_model*.bin
+*.pt
+*.pth
+
+# Editor and operating-system files
+.DS_Store
+.vscode/
+.idea/
