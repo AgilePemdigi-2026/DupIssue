@@ -1,0 +1,25 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Laravel dependencies and generated assets
+/backend/vendor/
+/backend/node_modules/
+/backend/public/build/
+/backend/storage/*.key
+
+# Python environment
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+
+# Editor settings
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
