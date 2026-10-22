@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
 
 class LogoutTest extends TestCase
@@ -15,12 +14,6 @@ class LogoutTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-
-        if (! Route::has('login')) {
-            Route::get('/_tests/logout-login', fn () => response('Login fixture'))
-                ->name('login');
-            Route::getRoutes()->refreshNameLookups();
-        }
 
         // Allow this test to run without a development application key.
         if (! config('app.key')) {
@@ -61,6 +54,7 @@ class LogoutTest extends TestCase
             ->assertRedirect(route('login'));
 
         $this->assertGuest();
+        $this->get(route('login'))->assertOk()->assertViewIs('auth.login');
     }
 
     public function test_logout_disallows_get(): void
@@ -77,10 +71,12 @@ class LogoutTest extends TestCase
 
     public function test_protected_page_is_inaccessible_after_logout(): void
     {
-        Route::middleware(['web', 'auth'])->get('/_tests/logout-protected', fn () => response('Protected'));
         $user = User::factory()->create();
-        $this->actingAs($user)->get('/_tests/logout-protected')->assertOk();
+        $user->role = 'REPORTER';
+        $user->save();
+
+        $this->actingAs($user)->get(route('reporter.projects.index'))->assertOk();
         $this->post('/logout')->assertRedirect(route('login'));
-        $this->get('/_tests/logout-protected')->assertRedirect(route('login'));
+        $this->get(route('reporter.projects.index'))->assertRedirect(route('login'));
     }
 }
