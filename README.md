@@ -1,4 +1,18 @@
-# DupIssue
+<div align="center">
+  <img src="docs/assets/dupissue-banner.svg" alt="Banner DupIssue: pelaporan issue, kemiripan semantik NLP, dan triase oleh Maintainer" width="100%" />
+  <p><strong>More clarity. Less duplication.</strong></p>
+  <p>Satu ruang kerja untuk melaporkan issue, menemukan kandidat laporan serupa, dan membantu Maintainer melakukan triase.</p>
+  <p>
+    <a href="#lihat-rancangan-aplikasinya"><strong>Lihat rancangan UI</strong></a> ·
+    <a href="#alur-kerja">Alur kerja</a> ·
+    <a href="#menjalankan-aplikasi">Cara menjalankan</a> ·
+    <a href="docs/README.md">Dokumentasi</a>
+  </p>
+</div>
+
+---
+
+## Tentang DupIssue
 
 **Sistem Deteksi Duplikasi Bug/Issue Report Berbasis NLP Semantic Similarity untuk Efisiensi Triase pada Proyek Software**
 
@@ -10,6 +24,8 @@ DupIssue membantu Reporter melaporkan dan memantau issue dalam suatu project, se
 
 ## Navigasi
 
+- [Lihat rancangan aplikasinya](#lihat-rancangan-aplikasinya)
+- [Alur kerja](#alur-kerja)
 - [Fitur dan roadmap](#fitur-dan-roadmap)
 - [Teknologi](#teknologi)
 - [Struktur repository](#struktur-repository)
@@ -18,6 +34,46 @@ DupIssue membantu Reporter melaporkan dan memantau issue dalam suatu project, se
 - [Dokumentasi dan artefak](#dokumentasi-dan-artefak)
 - [Alur kolaborasi](#alur-kolaborasi)
 - [Tim](#tim)
+
+## Lihat rancangan aplikasinya
+
+<table>
+  <tr>
+    <th align="left">Daftar Project — Reporter</th>
+    <th align="left">Submit Issue + rekomendasi serupa</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/ui-reporter.svg" alt="Ilustrasi rancangan antarmuka Reporter dengan kartu project dan pemberitahuan undangan" width="100%" /></td>
+    <td width="50%"><img src="docs/assets/ui-submit.svg" alt="Ilustrasi rancangan Submit Issue dengan form laporan dan kandidat kemiripan NLP" width="100%" /></td>
+  </tr>
+</table>
+
+<p align="center"><strong>Dashboard Maintainer — triase dan kandidat duplikat</strong></p>
+<p align="center"><img src="docs/assets/ui-maintainer.svg" alt="Ilustrasi rancangan dashboard Maintainer dengan ringkasan issue, grafik, dan daftar prioritas triase" width="87%" /></p>
+
+> **Keterangan galeri:** ilustrasi vektor di atas **diadaptasi dari konsep Data Mockup UTS Kelompok 4** untuk memperkenalkan tampilan yang direncanakan. **Bukan screenshot aplikasi yang sudah berjalan.** Halaman Project, Submit Issue, dan Dashboard final masih dalam pengembangan. Setelah implementasinya tersedia dan diuji, ilustrasi dapat diganti screenshot aplikasi sesungguhnya beserta evidence-nya.
+
+## Alur kerja
+
+DupIssue dirancang untuk mendukung proses **Reporter mengirim issue → sistem mencari kandidat mirip → Maintainer meninjau duplikasi**. Autentikasi Register dan Login/RBAC sudah terintegrasi; **alur issue dan Laravel–FastAPI di bawah menunjukkan target integrasi proyek, bukan klaim semua tahap sudah berjalan di `main`.**
+
+```mermaid
+flowchart LR
+    A["Reporter"] --> B["Register / Login"]
+    B --> C["Daftar Project / Undangan"]
+    C --> D["Submit Issue"]
+    D --> E["Laravel: Validasi & Simpan"]
+    E --> F[("MySQL")]
+    E -.-> G["Queue / Integrasi NLP"]
+    G -.-> H["FastAPI Semantic Similarity"]
+    H -.-> I["Kandidat Issue Serupa"]
+    I -.-> J["Maintainer: Review"]
+    J --> K{"Issue duplikat?"}
+    K -->|Ya| L["Tandai / tautkan duplikasi"]
+    K -->|Tidak| M["Tetap sebagai issue tersendiri"]
+```
+
+**Prinsip utama:** skor NLP merupakan **rekomendasi kemiripan**. Penetapan status `DUPLICATE` tetap merupakan keputusan Maintainer, bukan perubahan otomatis oleh model.
 
 ## Fitur dan roadmap
 
@@ -187,4 +243,10 @@ Gunakan [Pull Request template](.github/PULL_REQUEST_TEMPLATE.md) untuk memudahk
 | Elsa Alfika Dyah K. P. | Logout dan Submit Issue |
 | Fakhri Reza Abinaya | Mengelola Project & Anggota |
 
-**Program Studi Sistem Informasi — Universitas Airlangga, 2026.**
+---
+
+<p align="center">
+  <img src="docs/assets/dupissue-logo.svg" alt="Logo DupIssue" width="46" />
+  <br />
+  <sub><strong>DupIssue</strong> · Kelompok 4 / I1 · PPL Praktikum · Universitas Airlangga · 2026</sub>
+</p>
