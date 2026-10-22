@@ -169,7 +169,9 @@
                 <div class="text-center mt-4">
                     <small class="text-muted">
                         Sudah memiliki akun?
-                        Halaman login akan segera tersedia.
+                        <a href="{{ route('login') }}">
+                            Masuk sekarang
+                        </a>
                     </small>
                 </div>
 
