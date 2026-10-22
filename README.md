@@ -35,7 +35,7 @@ DupIssue membantu Reporter melaporkan dan memantau issue dalam suatu project, se
 - [Alur kolaborasi](#alur-kolaborasi)
 - [Tim](#tim)
 
-## Lihat rancangan aplikasinya
+## MockUp Aplikasi
 
 <table>
   <tr>
