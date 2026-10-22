@@ -15,11 +15,7 @@
 ## Tentang DupIssue
 
 **Sistem Deteksi Duplikasi Bug/Issue Report Berbasis NLP Semantic Similarity untuk Efisiensi Triase pada Proyek Software**
-
-Proyek mata kuliah **Praktikum Pembangunan Perangkat Lunak (PPL Prak)** — Kelas I1, Kelompok 4, Program Studi Sistem Informasi, Universitas Airlangga (2026).
-
 DupIssue membantu Reporter melaporkan dan memantau issue dalam suatu project, sementara Maintainer mengelola project, melakukan triase, dan memvalidasi kandidat issue duplikat. Layanan NLP memberikan **skor kemiripan semantik**, bukan keputusan duplikasi otomatis.
-
 > **Status:** Pengembangan bertahap dengan Scrum (3 sprint). Fitur Register serta Login & RBAC telah terintegrasi di `main`. Halaman tujuan role masih berupa placeholder; modul project, issue, dan integrasi NLP sedang dikembangkan.
 
 ## Navigasi
@@ -51,11 +47,11 @@ DupIssue membantu Reporter melaporkan dan memantau issue dalam suatu project, se
 <p align="center"><strong>Dashboard Maintainer — triase dan kandidat duplikat</strong></p>
 <p align="center"><img src="docs/assets/ui-maintainer.svg" alt="Ilustrasi rancangan dashboard Maintainer dengan ringkasan issue, grafik, dan daftar prioritas triase" width="87%" /></p>
 
-> **Keterangan galeri:** ilustrasi vektor di atas **diadaptasi dari konsep Data Mockup UTS Kelompok 4** untuk memperkenalkan tampilan yang direncanakan. **Bukan screenshot aplikasi yang sudah berjalan.** Halaman Project, Submit Issue, dan Dashboard final masih dalam pengembangan. Setelah implementasinya tersedia dan diuji, ilustrasi dapat diganti screenshot aplikasi sesungguhnya beserta evidence-nya.
+> **Notes:** ilustrasi di atas adalah bentuk pengembangan Data Mockup UTS untuk memperkenalkan tampilan yang direncanakan, bukan screenshot aplikasi yang sudah berjalan. Halaman Project, Submit Issue, dan Dashboard final masih dalam pengembangan. Setelah implementasinya tersedia dan diuji, ilustrasi dapat diganti screenshot aplikasi sesungguhnya beserta evidence-nya.
 
 ## Alur kerja
 
-DupIssue dirancang untuk mendukung proses **Reporter mengirim issue → sistem mencari kandidat mirip → Maintainer meninjau duplikasi**. Autentikasi Register dan Login/RBAC sudah terintegrasi; **alur issue dan Laravel–FastAPI di bawah menunjukkan target integrasi proyek, bukan klaim semua tahap sudah berjalan di `main`.**
+DupIssue dirancang untuk mendukung proses **Reporter mengirim issue → sistem mencari kandidat mirip → Maintainer meninjau duplikasi**. Autentikasi Register dan Login/RBAC sudah terintegrasi; **alur issue dan Laravel–FastAPI di bawah menunjukkan target integrasi proyek.**
 
 ```mermaid
 flowchart LR
@@ -73,7 +69,7 @@ flowchart LR
     K -->|Tidak| M["Tetap sebagai issue tersendiri"]
 ```
 
-**Prinsip utama:** skor NLP merupakan **rekomendasi kemiripan**. Penetapan status `DUPLICATE` tetap merupakan keputusan Maintainer, bukan perubahan otomatis oleh model.
+**Prinsip utama:** skor NLP merupakan rekomendasi kemiripan. Penetapan status `DUPLICATE` tetap merupakan keputusan Maintainer, bukan perubahan otomatis oleh model.
 
 ## Fitur dan roadmap
 
