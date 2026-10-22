@@ -35,10 +35,4 @@ return [
         ],
     ],
 
-    'nlp' => [
-        'base_url' => env('NLP_SERVICE_URL'),
-        'timeout' => 10,
-        'connect_timeout' => 5,
-    ],
-
 ];
