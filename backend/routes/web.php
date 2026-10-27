@@ -1,20 +1,101 @@
-﻿<?php
+<?php
 
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\ProjectMemberController;
+use Illuminate\Support\Facades\Route;
 
-// Halaman utama Laravel.
+/*
+|--------------------------------------------------------------------------
+| HALAMAN UTAMA
+|--------------------------------------------------------------------------
+| Sementara menggunakan halaman bawaan Laravel.
+*/
+
 Route::get('/', function () {
     return view('welcome');
-});
+})->name('home');
 
-// Menampilkan halaman registrasi.
+
+/*
+|--------------------------------------------------------------------------
+| REGISTER
+|--------------------------------------------------------------------------
+| Pengguna baru dapat membuat akun DupIssue.
+*/
+
+// Menampilkan halaman Register.
 Route::view('/register', 'auth.register')
     ->name('register');
 
-// Memproses data registrasi.
+// Memproses registrasi.
 Route::post('/register', [RegisterController::class, 'store'])
     ->name('register.store');
+
+
+/*
+|--------------------------------------------------------------------------
+| LOGIN
+|--------------------------------------------------------------------------
+| Login hanya untuk pengguna yang belum terautentikasi.
+*/
+
+Route::middleware('guest')->group(function () {
+
+    // Menampilkan halaman Login.
+    Route::get('/login', [LoginController::class, 'show'])
+        ->name('login');
+
+    // Memproses Login dengan pembatasan percobaan.
+    Route::post('/login', [LoginController::class, 'authenticate'])
+        ->middleware('throttle:5,1')
+        ->name('login.authenticate');
+
+});
+
+Route::post('/logout', [LogoutController::class, 'logout'])
+    ->middleware('auth')
+    ->name('logout');
+
+/*
+|--------------------------------------------------------------------------
+| HALAMAN REPORTER
+|--------------------------------------------------------------------------
+| Sementara menggunakan placeholder.
+| Nantinya diintegrasikan dengan Project & Membership Reza.
+*/
+
+Route::middleware(['auth', 'role:REPORTER'])
+    ->group(function () {
+
+        Route::get('/reporter/projects', function () {
+            return view('auth.role-landing', [
+                'role' => 'REPORTER',
+            ]);
+        })->name('reporter.projects.index');
+
+    });
+
+
+/*
+|--------------------------------------------------------------------------
+| DASHBOARD MAINTAINER
+|--------------------------------------------------------------------------
+| Hanya pengguna dengan role MAINTAINER yang diizinkan.
+*/
+
+Route::middleware(['auth', 'role:MAINTAINER'])
+    ->group(function () {
+
+        Route::get('/maintainer/dashboard', function () {
+            return view('auth.role-landing', [
+                'role' => 'MAINTAINER',
+            ]);
+        })->name('maintainer.dashboard');
+
+    });
+
 
 /*
 |--------------------------------------------------------------------------
@@ -22,9 +103,8 @@ Route::post('/register', [RegisterController::class, 'store'])
 |--------------------------------------------------------------------------
 | Seluruh rute dilindungi verifikasi server-side (REQ-07.3, REQ-03.1 s.d. 03.12).
 */
-use App\Http\Controllers\ProjectMemberController;
 
-Route::middleware(['web'])->group(function () {
+Route::middleware(['auth'])->group(function () {
     // Project Management
     Route::get('/projects', [ProjectMemberController::class, 'index'])->name('projects.index');
     Route::get('/projects/new', [ProjectMemberController::class, 'create'])->name('projects.create');
