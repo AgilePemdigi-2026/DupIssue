@@ -60,9 +60,13 @@ class ProjectPolicy
      */
     public function canAccessProject(User $user, Project $project): bool
     {
-        // 1. Pemilik project selalu memiliki akses
-        if ($user->id === $project->owner_id) {
+        // 1. Pemilik project harus tetap memiliki peran Maintainer.
+        if ($user->role === 'MAINTAINER' && $user->id === $project->owner_id) {
             return true;
+        }
+
+        if ($user->role !== 'REPORTER') {
+            return false;
         }
 
         // 2. Anggota harus memiliki catatan keanggotaan aktif (is_active = 1)

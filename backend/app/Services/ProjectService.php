@@ -7,6 +7,7 @@ use App\Models\Membership;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -30,6 +31,11 @@ class ProjectService
             throw new AuthorizationException('Akses tidak tersedia');
         }
 
+        // Normalisasi sebelum validasi, termasuk pemanggil service di luar HTTP.
+        if (isset($data['name']) && is_string($data['name'])) {
+            $data['name'] = trim($data['name']);
+        }
+
         // 2. Validasi input nama dan deskripsi
         $validator = Validator::make($data, [
             'name' => ['required', 'string', 'min:3', 'max:100'],
@@ -47,7 +53,7 @@ class ProjectService
 
         // Validasi keunikan nama project secara case-insensitive (panduan final)
         $cleanName = trim($data['name']);
-        $existingProject = Project::whereRaw('LOWER(name) = ?', [strtolower($cleanName)])->exists();
+        $existingProject = Project::where('name', $cleanName)->exists();
         if ($existingProject) {
             throw ValidationException::withMessages([
                 'name' => 'Nama sudah digunakan',
@@ -62,7 +68,7 @@ class ProjectService
         $project->owner_id = $creator->id;
         $project->created_at = now();
         $project->updated_at = now();
-        $project->save();
+        $this->saveProject($project);
 
         // 4. Titik pemanggilan log aktivitas (REQ-03.12)
         $this->logActivity('CREATE_PROJECT', $project, $creator, [
@@ -88,6 +94,10 @@ class ProjectService
             throw new AuthorizationException('Akses tidak tersedia');
         }
 
+        if (isset($data['name']) && is_string($data['name'])) {
+            $data['name'] = trim($data['name']);
+        }
+
         // 2. Validasi ulang input
         $validator = Validator::make($data, [
             'name' => ['required', 'string', 'min:3', 'max:100'],
@@ -106,7 +116,7 @@ class ProjectService
         $cleanName = trim($data['name']);
 
         // Pengecekan nama duplikat case-insensitive (mengabaikan project sendiri)
-        $existingProject = Project::whereRaw('LOWER(name) = ?', [strtolower($cleanName)])
+        $existingProject = Project::where('name', $cleanName)
             ->where('id', '!=', $project->id)
             ->exists();
         if ($existingProject) {
@@ -124,7 +134,7 @@ class ProjectService
         $project->name = $cleanName;
         $project->description = $data['description'] ?? null;
         $project->updated_at = now();
-        $project->save();
+        $this->saveProject($project);
 
         // 4. Titik pemanggilan log aktivitas (REQ-03.12)
         $this->logActivity('UPDATE_PROJECT', $project, $user, [
@@ -151,6 +161,9 @@ class ProjectService
     public function inviteReporter(User $inviter, Project $project, string $email): Invitation
     {
         return DB::transaction(function () use ($inviter, $project, $email) {
+            // Kunci parent yang selalu ada, sebelum membaca membership/undangan.
+            // Lock baris anak yang belum ada tidak menjamin undangan tunggal.
+            $project = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
             // 1. Verifikasi pemilik project
             if ($inviter->id !== $project->owner_id || $inviter->role !== 'MAINTAINER') {
                 throw new AuthorizationException('Akses tidak tersedia');
@@ -181,14 +194,14 @@ class ProjectService
                 ->where('user_id', $reporter->id)
                 ->where('is_active', true)
                 ->lockForUpdate()
-                ->exists();
+                ->first();
 
             // 5. Periksa apakah sudah memiliki undangan PENDING pada project yang sama (dengan lockForUpdate)
             $hasPendingInvitation = Invitation::where('project_id', $project->id)
                 ->where('reporter_id', $reporter->id)
                 ->where('status', 'PENDING')
                 ->lockForUpdate()
-                ->exists();
+                ->first();
 
             if ($isActiveMember || $hasPendingInvitation) {
                 throw ValidationException::withMessages([
@@ -213,7 +226,7 @@ class ProjectService
             ]);
 
             return $invitation;
-        });
+        }, 3);
     }
 
     /**
@@ -226,8 +239,9 @@ class ProjectService
     public function cancelInvitation(User $user, Invitation $invitation): Invitation
     {
         return DB::transaction(function () use ($user, $invitation) {
+            // Semua operasi menggunakan urutan lock yang sama: project, lalu anak.
+            $project = Project::whereKey($invitation->project_id)->lockForUpdate()->firstOrFail();
             $invitation = Invitation::where('id', $invitation->id)->lockForUpdate()->firstOrFail();
-            $project = $invitation->project;
 
             if ($user->id !== $project->owner_id || $user->role !== 'MAINTAINER') {
                 throw new AuthorizationException('Akses tidak tersedia');
@@ -249,7 +263,7 @@ class ProjectService
             ]);
 
             return $invitation;
-        });
+        }, 3);
     }
 
     /**
@@ -263,6 +277,7 @@ class ProjectService
     public function removeMember(User $user, Project $project, int $userId): Membership
     {
         return DB::transaction(function () use ($user, $project, $userId) {
+            $project = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
             if ($user->id !== $project->owner_id || $user->role !== 'MAINTAINER') {
                 throw new AuthorizationException('Akses tidak tersedia');
             }
@@ -289,7 +304,7 @@ class ProjectService
             ]);
 
             return $membership;
-        });
+        }, 3);
     }
 
     /**
@@ -304,10 +319,11 @@ class ProjectService
     public function respondInvitation(User $reporter, Invitation $invitation, string $action): Invitation
     {
         return DB::transaction(function () use ($reporter, $invitation, $action) {
+            $project = Project::whereKey($invitation->project_id)->lockForUpdate()->firstOrFail();
             $invitation = Invitation::where('id', $invitation->id)->lockForUpdate()->firstOrFail();
 
             // 1. Verifikasi penerima undangan
-            if ($reporter->id !== $invitation->reporter_id) {
+            if ($reporter->role !== 'REPORTER' || $reporter->id !== $invitation->reporter_id) {
                 throw new AuthorizationException('Akses tidak tersedia');
             }
 
@@ -319,8 +335,6 @@ class ProjectService
             if (!in_array($action, ['accept', 'reject'], true)) {
                 throw new \InvalidArgumentException('Aksi tidak valid (hanya accept atau reject)');
             }
-
-            $project = $invitation->project;
 
             if ($action === 'accept') {
                 $invitation->update([
@@ -367,7 +381,7 @@ class ProjectService
             }
 
             return $invitation;
-        });
+        }, 3);
     }
 
     /**
@@ -379,8 +393,12 @@ class ProjectService
      */
     public function canAccessProject(User $user, Project $project): bool
     {
-        if ($user->id === $project->owner_id) {
+        if ($user->role === 'MAINTAINER' && $user->id === $project->owner_id) {
             return true;
+        }
+
+        if ($user->role !== 'REPORTER') {
+            return false;
         }
 
         return Membership::where('project_id', $project->id)
@@ -401,8 +419,19 @@ class ProjectService
             ->get();
     }
 
+    private function saveProject(Project $project): void
+    {
+        try {
+            // Constraint DB tetap menjadi jaminan ketika request lolos pre-check bersamaan.
+            $project->save();
+        } catch (UniqueConstraintViolationException $e) {
+            throw ValidationException::withMessages(['name' => 'Nama sudah digunakan']);
+        }
+    }
+
     /**
-     * Titik pemanggilan untuk pencatatan riwayat aktivitas project (REQ-03.12 / REQ-07.7).
+     * Integration TODO Sprint 3 (REQ-03.12 / REQ-07.7): koordinasikan audit permanen
+     * dengan Joshua. Log::info hanya log aplikasi, BUKAN record tabel activity_logs.
      * Tidak memanggil query database tabel activity_logs secara langsung sebelum
      * kepemilikan dan skema tabel tersebut difinalisasi bersama Joshua.
      */
