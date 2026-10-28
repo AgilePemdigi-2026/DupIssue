@@ -220,6 +220,12 @@ class ProjectMemberController extends Controller
             abort(403, 'Akses tidak tersedia');
         }
 
+        // Undangan yang statusnya sudah bukan PENDING
+        if ($invitation->status !== 'PENDING') {
+            return redirect('/projects/' . $id . '/members')
+                ->with('error', 'Hanya undangan berstatus PENDING yang dapat dibatalkan');
+        }
+
         try {
             $this->projectService->cancelInvitation($user, $invitation);
 
@@ -227,6 +233,9 @@ class ProjectMemberController extends Controller
                 ->with('success', 'Undangan berhasil dibatalkan');
         } catch (AuthorizationException $e) {
             abort(403, 'Akses tidak tersedia');
+        } catch (\DomainException $e) {
+            return redirect('/projects/' . $id . '/members')
+                ->with('error', $e->getMessage());
         }
     }
 
@@ -244,14 +253,19 @@ class ProjectMemberController extends Controller
             abort(403, 'Akses tidak tersedia');
         }
 
-        // Validasi relasi: target user harus memiliki keanggotaan aktif pada project ini
+        // Validasi relasi: target user harus memiliki keanggotaan pada project ini
         $membership = Membership::where('project_id', $project->id)
             ->where('user_id', $userId)
-            ->where('is_active', true)
             ->first();
 
         if (!$membership) {
             abort(403, 'Akses tidak tersedia');
+        }
+
+        // Jika anggota sudah tidak aktif
+        if (!$membership->is_active) {
+            return redirect('/projects/' . $project->id . '/members')
+                ->with('error', 'Anggota tidak ditemukan atau sudah tidak aktif');
         }
 
         try {
@@ -261,6 +275,9 @@ class ProjectMemberController extends Controller
                 ->with('success', 'Keanggotaan dinonaktifkan. Seluruh riwayat tetap tersimpan.');
         } catch (AuthorizationException $e) {
             abort(403, 'Akses tidak tersedia');
+        } catch (\DomainException $e) {
+            return redirect('/projects/' . $project->id . '/members')
+                ->with('error', $e->getMessage());
         }
     }
 
@@ -291,14 +308,34 @@ class ProjectMemberController extends Controller
         $user = $this->getAuthUser();
         $invitation = Invitation::findOrFail($invitationId);
 
-        if ((int) $user->id !== (int) $invitation->reporter_id || $user->role !== 'REPORTER') {
+        if ($user->role !== 'REPORTER' || (int) $user->id !== (int) $invitation->reporter_id) {
             abort(403, 'Akses tidak tersedia');
         }
 
-        $action = (string) $request->input('action'); // 'accept' atau 'reject'
+        $action = $request->input('action');
+
+        // Validasi input action: hanya boleh 'accept' atau 'reject'
+        if (!in_array($action, ['accept', 'reject'], true)) {
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'message' => 'Aksi tidak valid (hanya accept atau reject)',
+                    'errors' => ['action' => ['Aksi tidak valid (hanya accept atau reject)']],
+                ], 422);
+            }
+
+            return redirect('/invitations')
+                ->withErrors(['action' => 'Aksi tidak valid (hanya accept atau reject)'])
+                ->with('error', 'Aksi tidak valid (hanya accept atau reject)');
+        }
+
+        // Undangan yang statusnya sudah bukan PENDING (ACCEPTED, REJECTED, CANCELED)
+        if ($invitation->status !== 'PENDING') {
+            return redirect('/invitations')
+                ->with('error', 'Undangan sudah pernah ditanggapi atau dibatalkan');
+        }
 
         try {
-            $this->projectService->respondInvitation($user, $invitation, $action);
+            $this->projectService->respondInvitation($user, $invitation, (string) $action);
 
             $msg = ($action === 'accept')
                 ? 'Undangan berhasil diterima. Anda sekarang menjadi anggota aktif.'
@@ -307,6 +344,10 @@ class ProjectMemberController extends Controller
             return redirect('/invitations')->with('success', $msg);
         } catch (AuthorizationException $e) {
             abort(403, 'Akses tidak tersedia');
+        } catch (\DomainException $e) {
+            return redirect('/invitations')->with('error', $e->getMessage());
+        } catch (\InvalidArgumentException $e) {
+            return redirect('/invitations')->with('error', $e->getMessage());
         }
     }
 }

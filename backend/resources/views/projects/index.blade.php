@@ -12,6 +12,13 @@
         <a href="/projects/new" class="btn btn-primary px-4 py-2">
             <i class="bi bi-plus-circle me-1"></i> Buat Project
         </a>
+    @elseif(auth()->user() && auth()->user()->role === 'REPORTER')
+        <a href="/invitations" class="btn btn-outline-primary px-4 py-2">
+            <i class="bi bi-envelope me-1"></i> Daftar Undangan
+            @if(isset($incomingInvitationsCount) && $incomingInvitationsCount > 0)
+                <span class="badge bg-primary text-white ms-1">{{ $incomingInvitationsCount }}</span>
+            @endif
+        </a>
     @endif
 </div>
 
@@ -66,6 +73,10 @@
                     @if(auth()->user() && auth()->user()->role === 'MAINTAINER')
                         <a href="/projects/new" class="btn btn-primary mt-2">
                             <i class="bi bi-plus-circle me-1"></i> Buat Project
+                        </a>
+                    @elseif(auth()->user() && auth()->user()->role === 'REPORTER')
+                        <a href="/invitations" class="btn btn-outline-primary mt-2">
+                            <i class="bi bi-envelope me-1"></i> Lihat Undangan
                         </a>
                     @endif
                 </div>

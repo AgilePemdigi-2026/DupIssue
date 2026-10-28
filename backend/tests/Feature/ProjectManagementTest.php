@@ -618,4 +618,283 @@ class ProjectManagementTest extends TestCase
         $canceledInv = Invitation::factory()->canceled()->create();
         $this->assertSame('CANCELED', $canceledInv->status);
     }
+
+    /**
+     * Kasus 16: Route placeholder menampilkan daftar project dengan status 200 sesuai peran.
+     */
+    public function test_placeholder_routes_redirect_to_projects_index(): void
+    {
+        $maintainer = $this->createMaintainer();
+        $reporter = $this->createReporter();
+
+        $project = $this->createProject($maintainer, ['name' => 'Project Placeholder Test']);
+        Membership::create([
+            'project_id' => $project->id,
+            'user_id' => $reporter->id,
+            'is_active' => true,
+            'joined_at' => now(),
+        ]);
+
+        // 1. Maintainer mengakses /maintainer/dashboard: status 200, melihat project miliknya
+        $responseMaintainer = $this->actingAs($maintainer)->get('/maintainer/dashboard');
+        $responseMaintainer->assertOk();
+        $responseMaintainer->assertSee('Project Placeholder Test');
+        $responseMaintainer->assertSee('Buat Project');
+
+        // 2. Reporter mengakses /reporter/projects: status 200, melihat project yang diikutinya dan tautan undangan
+        $responseReporter = $this->actingAs($reporter)->get('/reporter/projects');
+        $responseReporter->assertOk();
+        $responseReporter->assertSee('Project Placeholder Test');
+        $responseReporter->assertSee('/invitations');
+
+        // 3. Reporter ditolak mengakses /maintainer/dashboard (403)
+        $this->actingAs($reporter)->get('/maintainer/dashboard')->assertForbidden();
+
+        // 4. Maintainer ditolak mengakses /reporter/projects (403)
+        $this->actingAs($maintainer)->get('/reporter/projects')->assertForbidden();
+    }
+
+    /**
+     * Kasus 17: Daftar project menampilkan konten sesuai peran (Perbaikan A).
+     */
+    public function test_projects_index_displays_correct_list_per_role(): void
+    {
+        $maintainerA = $this->createMaintainer(['email' => 'maintainer_a@dupissue.test']);
+        $maintainerB = $this->createMaintainer(['email' => 'maintainer_b@dupissue.test']);
+        $reporter = $this->createReporter(['email' => 'reporter_list@dupissue.test']);
+
+        $projectA = $this->createProject($maintainerA, ['name' => 'Project Maintainer A']);
+        $projectB = $this->createProject($maintainerB, ['name' => 'Project Maintainer B']);
+
+        // Maintainer A membuka /projects: melihat project miliknya dan tombol Buat Project
+        $responseMaintainer = $this->actingAs($maintainerA)->get('/projects');
+        $responseMaintainer->assertOk();
+        $responseMaintainer->assertSee('Project Maintainer A');
+        $responseMaintainer->assertDontSee('Project Maintainer B');
+        $responseMaintainer->assertSee('Buat Project');
+
+        // Reporter belum bergabung: tidak melihat project dan ada tautan ke /invitations
+        $responseReporterEmpty = $this->actingAs($reporter)->get('/projects');
+        $responseReporterEmpty->assertOk();
+        $responseReporterEmpty->assertDontSee('Project Maintainer A');
+        $responseReporterEmpty->assertDontSee('Buat Project');
+        $responseReporterEmpty->assertSee('/invitations');
+
+        // Reporter dijadikan anggota aktif project A dan anggota non-aktif project B
+        Membership::create([
+            'project_id' => $projectA->id,
+            'user_id' => $reporter->id,
+            'is_active' => true,
+            'joined_at' => now(),
+        ]);
+        Membership::create([
+            'project_id' => $projectB->id,
+            'user_id' => $reporter->id,
+            'is_active' => false,
+            'joined_at' => now()->subDays(5),
+            'removed_at' => now(),
+        ]);
+
+        // Reporter melihat project A yang aktif saja, bukan project B
+        $responseReporterMember = $this->actingAs($reporter)->get('/projects');
+        $responseReporterMember->assertOk();
+        $responseReporterMember->assertSee('Project Maintainer A');
+        $responseReporterMember->assertDontSee('Project Maintainer B');
+        $responseReporterMember->assertSee('/invitations');
+    }
+
+    /**
+     * Kasus 18: Respons undangan dengan action tidak valid ditolak (Perbaikan B).
+     */
+    public function test_respond_invitation_with_invalid_action_rejected(): void
+    {
+        $maintainer = $this->createMaintainer();
+        $reporter = $this->createReporter();
+        $project = $this->createProject($maintainer);
+
+        $invitation = Invitation::create([
+            'project_id' => $project->id,
+            'invited_by' => $maintainer->id,
+            'reporter_id' => $reporter->id,
+            'status' => 'PENDING',
+            'created_at' => now(),
+        ]);
+
+        // 1. Action kosong
+        $responseEmpty = $this->actingAs($reporter)->post("/invitations/{$invitation->id}/respond", [
+            'action' => '',
+        ]);
+        $this->assertNotSame(500, $responseEmpty->getStatusCode());
+        $responseEmpty->assertSessionHasErrors(['action']);
+
+        // 2. Action tidak valid ('delete')
+        $responseInvalid = $this->actingAs($reporter)->post("/invitations/{$invitation->id}/respond", [
+            'action' => 'delete',
+        ]);
+        $this->assertNotSame(500, $responseInvalid->getStatusCode());
+        $responseInvalid->assertSessionHasErrors(['action']);
+
+        // 3. Request JSON mengembalikan 422
+        $responseJson = $this->actingAs($reporter)->postJson("/invitations/{$invitation->id}/respond", [
+            'action' => 'invalid_action',
+        ]);
+        $responseJson->assertStatus(422);
+
+        // Status di database tetap PENDING
+        $this->assertSame('PENDING', $invitation->fresh()->status);
+    }
+
+    /**
+     * Kasus 19: Respons undangan yang tidak ditemukan mengembalikan 404 (Perbaikan B).
+     */
+    public function test_respond_invitation_not_found_returns_404(): void
+    {
+        $reporter = $this->createReporter();
+
+        $response = $this->actingAs($reporter)->post('/invitations/999999/respond', [
+            'action' => 'accept',
+        ]);
+
+        $response->assertStatus(404);
+    }
+
+    /**
+     * Kasus 20: Respons undangan milik orang lain ditolak 403 (Perbaikan B).
+     */
+    public function test_respond_invitation_belonging_to_other_user_returns_403(): void
+    {
+        $maintainer = $this->createMaintainer();
+        $reporterA = $this->createReporter(['email' => 'reporter_a@dupissue.test']);
+        $reporterB = $this->createReporter(['email' => 'reporter_b@dupissue.test']);
+        $project = $this->createProject($maintainer);
+
+        $invitation = Invitation::create([
+            'project_id' => $project->id,
+            'invited_by' => $maintainer->id,
+            'reporter_id' => $reporterA->id,
+            'status' => 'PENDING',
+            'created_at' => now(),
+        ]);
+
+        // Reporter B mencoba merespons undangan milik Reporter A
+        $response = $this->actingAs($reporterB)->post("/invitations/{$invitation->id}/respond", [
+            'action' => 'accept',
+        ]);
+
+        $response->assertStatus(403);
+        $response->assertSee('Akses tidak tersedia');
+        $this->assertSame('PENDING', $invitation->fresh()->status);
+    }
+
+    /**
+     * Kasus 21: Undangan sudah ACCEPTED/REJECTED/CANCELED direspons dua kali ditolak tanpa 500 (Perbaikan B).
+     */
+    public function test_respond_already_handled_invitation_rejected_without_500(): void
+    {
+        $maintainer = $this->createMaintainer();
+        $reporter = $this->createReporter();
+        $project = $this->createProject($maintainer);
+
+        // 1. Undangan sudah ACCEPTED
+        $acceptedInv = Invitation::create([
+            'project_id' => $project->id,
+            'invited_by' => $maintainer->id,
+            'reporter_id' => $reporter->id,
+            'status' => 'ACCEPTED',
+            'created_at' => now(),
+            'responded_at' => now(),
+        ]);
+        $responseAccepted = $this->actingAs($reporter)->post("/invitations/{$acceptedInv->id}/respond", [
+            'action' => 'accept',
+        ]);
+        $this->assertNotSame(500, $responseAccepted->getStatusCode());
+        $responseAccepted->assertRedirect('/invitations');
+        $responseAccepted->assertSessionHas('error');
+        $this->assertSame('ACCEPTED', $acceptedInv->fresh()->status);
+
+        // 2. Undangan sudah REJECTED
+        $rejectedInv = Invitation::create([
+            'project_id' => $project->id,
+            'invited_by' => $maintainer->id,
+            'reporter_id' => $reporter->id,
+            'status' => 'REJECTED',
+            'created_at' => now(),
+            'responded_at' => now(),
+        ]);
+        $responseRejected = $this->actingAs($reporter)->post("/invitations/{$rejectedInv->id}/respond", [
+            'action' => 'reject',
+        ]);
+        $this->assertNotSame(500, $responseRejected->getStatusCode());
+        $responseRejected->assertRedirect('/invitations');
+        $responseRejected->assertSessionHas('error');
+        $this->assertSame('REJECTED', $rejectedInv->fresh()->status);
+
+        // 3. Undangan sudah CANCELED
+        $canceledInv = Invitation::create([
+            'project_id' => $project->id,
+            'invited_by' => $maintainer->id,
+            'reporter_id' => $reporter->id,
+            'status' => 'CANCELED',
+            'created_at' => now(),
+            'responded_at' => now(),
+        ]);
+        $responseCanceled = $this->actingAs($reporter)->post("/invitations/{$canceledInv->id}/respond", [
+            'action' => 'accept',
+        ]);
+        $this->assertNotSame(500, $responseCanceled->getStatusCode());
+        $responseCanceled->assertRedirect('/invitations');
+        $responseCanceled->assertSessionHas('error');
+        $this->assertSame('CANCELED', $canceledInv->fresh()->status);
+    }
+
+    /**
+     * Kasus 22: Pembatalan undangan non-PENDING ditolak tanpa 500 (Perbaikan B).
+     */
+    public function test_cancel_non_pending_invitation_rejected_without_500(): void
+    {
+        $maintainer = $this->createMaintainer();
+        $reporter = $this->createReporter();
+        $project = $this->createProject($maintainer);
+
+        $invitation = Invitation::create([
+            'project_id' => $project->id,
+            'invited_by' => $maintainer->id,
+            'reporter_id' => $reporter->id,
+            'status' => 'ACCEPTED',
+            'created_at' => now(),
+            'responded_at' => now(),
+        ]);
+
+        $response = $this->actingAs($maintainer)->post("/projects/{$project->id}/invitations/{$invitation->id}/cancel");
+
+        $this->assertNotSame(500, $response->getStatusCode());
+        $response->assertRedirect("/projects/{$project->id}/members");
+        $response->assertSessionHas('error');
+        $this->assertSame('ACCEPTED', $invitation->fresh()->status);
+    }
+
+    /**
+     * Kasus 23: Hapus anggota yang sudah nonaktif ditolak tanpa 500 (Perbaikan B).
+     */
+    public function test_remove_already_inactive_member_rejected_without_500(): void
+    {
+        $maintainer = $this->createMaintainer();
+        $reporter = $this->createReporter();
+        $project = $this->createProject($maintainer);
+
+        $membership = Membership::create([
+            'project_id' => $project->id,
+            'user_id' => $reporter->id,
+            'is_active' => false,
+            'joined_at' => now()->subDays(10),
+            'removed_at' => now()->subDays(1),
+        ]);
+
+        $response = $this->actingAs($maintainer)->post("/projects/{$project->id}/members/{$reporter->id}/remove");
+
+        $this->assertNotSame(500, $response->getStatusCode());
+        $response->assertRedirect("/projects/{$project->id}/members");
+        $response->assertSessionHas('error');
+        $this->assertFalse((bool) $membership->fresh()->is_active);
+    }
 }

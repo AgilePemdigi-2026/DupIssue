@@ -69,11 +69,8 @@ Route::post('/logout', [LogoutController::class, 'logout'])
 Route::middleware(['auth', 'role:REPORTER'])
     ->group(function () {
 
-        Route::get('/reporter/projects', function () {
-            return view('auth.role-landing', [
-                'role' => 'REPORTER',
-            ]);
-        })->name('reporter.projects.index');
+        Route::get('/reporter/projects', [ProjectMemberController::class, 'index'])
+            ->name('reporter.projects.index');
 
     });
 
@@ -88,11 +85,8 @@ Route::middleware(['auth', 'role:REPORTER'])
 Route::middleware(['auth', 'role:MAINTAINER'])
     ->group(function () {
 
-        Route::get('/maintainer/dashboard', function () {
-            return view('auth.role-landing', [
-                'role' => 'MAINTAINER',
-            ]);
-        })->name('maintainer.dashboard');
+        Route::get('/maintainer/dashboard', [ProjectMemberController::class, 'index'])
+            ->name('maintainer.dashboard');
 
     });
 
