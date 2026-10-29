@@ -8,8 +8,8 @@ Jelaskan fitur/perbaikan yang dibuat dan alasan perubahan.
 
 ## Perubahan utama
 
-- 
-- 
+-
+-
 
 ## Requirement dan artefak
 
@@ -20,7 +20,7 @@ Jelaskan fitur/perbaikan yang dibuat dan alasan perubahan.
 
 ## Pengujian
 
-**Perintah yang dijalankan:** 
+**Perintah yang dijalankan:**
 ```text
 # contoh: php artisan test --filter=LoginTest
 ```
