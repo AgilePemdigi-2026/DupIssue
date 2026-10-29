@@ -11,8 +11,9 @@ class Issue extends Model
 {
     use HasFactory;
 
-    // Project, author, status, dan metadata sistem tidak berasal dari mass-assignment input user.
-    protected $fillable = ['title', 'description'];
+    // PR #22 uses update() for worker transitions. HTTP input must still be
+    // restricted to title/description; IssueController sets all metadata itself.
+    protected $fillable = ['title', 'description', 'detection_status'];
 
     protected function casts(): array
     {

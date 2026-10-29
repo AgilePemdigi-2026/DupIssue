@@ -80,12 +80,20 @@ class IssueController extends Controller
                         ->onQueue('nlp');
                     Bus::dispatch($job);
                 } catch (Throwable $exception) {
+                    $statusException = null;
+                    try {
+                        Issue::whereKey($issue->id)->where('detection_status', 'PENDING')
+                            ->update(['detection_status' => 'FAILED']);
+                    } catch (Throwable $failure) {
+                        // The issue is already committed. Do not turn a secondary
+                        // outage into a failed submit response that invites resubmission.
+                        $statusException = $failure;
+                    }
                     Log::error('Cannot enqueue issue NLP detection', [
                         'issue_id' => $issue->id,
                         'exception_type' => get_class($exception),
+                        'status_exception_type' => $statusException ? get_class($statusException) : null,
                     ]);
-                    Issue::whereKey($issue->id)->where('detection_status', 'PENDING')
-                        ->update(['detection_status' => 'FAILED']);
                 }
             });
 
@@ -100,6 +108,9 @@ class IssueController extends Controller
     {
         $user = $request->user();
         abort_unless($user && $this->projects->canAccessProject($user, $project), 403, 'Akses tidak tersedia');
+        if ($user->role === 'REPORTER') {
+            $this->authorizeReporter($request, $project);
+        }
 
         if ((int) $issue->project_id !== (int) $project->id) {
             abort(404);
