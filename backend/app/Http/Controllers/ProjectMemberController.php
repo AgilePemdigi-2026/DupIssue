@@ -186,7 +186,13 @@ class ProjectMemberController extends Controller
         }
 
         try {
-            $this->projectService->inviteReporter($user, $project, (string) $request->input('email'));
+            // Tolak array/object sebelum parameter string service (bukan HTTP 500).
+            $data = $request->validate(['email' => ['required', 'string', 'email']], [
+                'email.required' => 'Email wajib diisi',
+                'email.string' => 'Format email tidak valid',
+                'email.email' => 'Format email tidak valid',
+            ]);
+            $this->projectService->inviteReporter($user, $project, $data['email']);
 
             return redirect('/projects/' . $project->id . '/members')
                 ->with('success', 'Undangan berhasil dikirim');
