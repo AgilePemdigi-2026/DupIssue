@@ -540,7 +540,7 @@ class SubmitIssueTest extends TestCase
         $this->assertDatabaseHas('duplicate_candidates', [
             'issue_id' => $issue->id, 'candidate_issue_id' => $candidate->id,
         ]);
-        Queue::connection('database')->push(new DetectIssueCandidatesJob($issue->id));
+        Queue::connection('database')->pushOn('nlp', new DetectIssueCandidatesJob($issue->id));
         $this->runNlpWorkerOnce();
         $this->assertDatabaseCount('duplicate_candidates', 1);
         $this->assertDatabaseCount('issues', 2);
