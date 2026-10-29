@@ -51,11 +51,15 @@ class DuplicateCandidate extends Model
                 throw new InvalidArgumentException('Duplicate candidates must belong to the same project.');
             }
 
-            $score = $candidate->similarity_score;
-            if (! is_int($score) && ! is_float($score)) {
+            // Inspect the current raw attribute, not the float-cast accessor or
+            // original persisted value. Decimal columns may hydrate as strings.
+            $score = $candidate->getAttributes()['similarity_score'] ?? null;
+            if (! is_int($score) && ! is_float($score)
+                && ! (is_string($score) && is_numeric($score))) {
                 throw new InvalidArgumentException('Similarity score must be numeric.');
             }
 
+            $score = (float) $score;
             if (! is_finite((float) $score) || $score < 0 || $score > 1) {
                 throw new InvalidArgumentException('Similarity score must be finite and between 0 and 1.');
             }

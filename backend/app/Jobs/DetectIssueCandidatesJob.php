@@ -21,11 +21,9 @@ class DetectIssueCandidatesJob implements ShouldQueue
 
     public int $tries = 3;
 
-    public $afterCommit = true;
-
     public function __construct(public readonly int $issueId)
     {
-        $this->onConnection('database')->onQueue('nlp');
+        $this->onConnection('database')->onQueue('nlp')->afterCommit();
     }
 
     /** @return array<int, int> */
@@ -49,7 +47,18 @@ class DetectIssueCandidatesJob implements ShouldQueue
             return;
         }
 
-        $issue->update(['detection_status' => 'PROCESSING']);
+        // Another delivery may have completed since the initial read. Never
+        // downgrade COMPLETED, including when restarting a previously failed job.
+        Issue::query()->whereKey($this->issueId)
+            ->whereIn('detection_status', ['PENDING', 'PROCESSING', 'FAILED'])
+            ->update(['detection_status' => 'PROCESSING']);
+        $issue = Issue::query()->whereKey($this->issueId)
+            ->where('detection_status', 'PROCESSING')->first();
+        // Do not use the update row count here: an already PROCESSING row can
+        // be unchanged on databases that report changed rather than matched rows.
+        if ($issue === null) {
+            return;
+        }
 
         try {
             $comparisonIssues = Issue::query()
@@ -148,6 +157,15 @@ class DetectIssueCandidatesJob implements ShouldQueue
     private function persistResults(Issue $issue, array $results): void
     {
         DB::transaction(function () use ($issue, $results): void {
+            // Claim completion atomically before touching candidates. The status
+            // and results commit together; a later delivery preserves both.
+            $completed = Issue::query()->whereKey($issue->getKey())
+                ->whereIn('detection_status', ['PENDING', 'PROCESSING', 'FAILED'])
+                ->update(['detection_status' => 'COMPLETED']);
+            if ($completed === 0) {
+                return;
+            }
+
             DuplicateCandidate::query()->where('issue_id', $issue->getKey())->delete();
 
             foreach ($results as $result) {
@@ -159,8 +177,6 @@ class DetectIssueCandidatesJob implements ShouldQueue
                     ['similarity_score' => $result['similarity_score']],
                 );
             }
-
-            $issue->update(['detection_status' => 'COMPLETED']);
         });
     }
 
@@ -178,7 +194,12 @@ class DetectIssueCandidatesJob implements ShouldQueue
 
     private function markFailed(?Throwable $exception): void
     {
-        Issue::query()->whereKey($this->issueId)->update(['detection_status' => 'FAILED']);
+        $failed = Issue::query()->whereKey($this->issueId)
+            ->whereIn('detection_status', ['PENDING', 'PROCESSING'])
+            ->update(['detection_status' => 'FAILED']);
+        if ($failed === 0) {
+            return;
+        }
 
         Log::error('NLP issue detection failed.', [
             'issue_id' => $this->issueId,
