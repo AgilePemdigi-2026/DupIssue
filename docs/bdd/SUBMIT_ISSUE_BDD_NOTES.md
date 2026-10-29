@@ -2,6 +2,10 @@
 
 Audit lokal 29 Oktober 2026, branch `assist/elsa-pr19`.
 
+Update integrasi: Project/Membership asli dari main (PR #18/#24) kini tersedia.
+Suite PHPUnit dan navigasi Project/Submit sudah diperiksa; status runner BDD tetap
+belum executable. Lihat [hasil integrasi](../SUBMIT_ISSUE_REZA_INTEGRATION.md).
+
 ## Status eksekusi
 
 [submit-issue.feature](../../backend/tests/Bdd/submit-issue.feature) adalah spesifikasi
@@ -36,8 +40,9 @@ Semua nama di tabel mengacu pada [suite Submit](../../backend/tests/Feature/Subm
 
 ## Prasyarat runner
 
-1. Integrasikan modul Project asli serta Job/DuplicateCandidate asli. Selesaikan fatal
-   trait `$afterCommit` pada PR #22 terlebih dahulu; lihat [laporan audit](../SUBMIT_ISSUE_SPRINT1_AUDIT.md).
+1. Modul Project asli sudah terintegrasi. Job/DuplicateCandidate asli belum diintegrasikan.
+   Selesaikan fatal trait `$afterCommit` pada PR #22 terlebih dahulu;
+   lihat [laporan integrasi](../SUBMIT_ISSUE_REZA_INTEGRATION.md).
 2. Pasang Behat, Mink dan driver yang dipilih, buat konfigurasi suite dan context.
    Pastikan semua langkah terikat, tanpa undefined/pending steps.
 3. Gunakan SQLite testing terisolasi. `:memory:` hanya cocok bila HTTP kernel,

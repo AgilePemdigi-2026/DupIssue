@@ -26,10 +26,10 @@ class SubmitIssueTest extends TestCase
 
     protected function setUp(): void
     {
-        // Stop BEFORE application setup/migrations when PR #18 is not integrated.
+        // Project is now required: fail BEFORE setup/migrations if integration regresses.
         foreach ([Project::class, Membership::class, ProjectService::class] as $dependency) {
             if (! class_exists($dependency)) {
-                $this->markTestSkipped('PR #18 belum terintegrasi: '.$dependency);
+                $this->fail('Missing required Project dependency after PR #18 integration: '.$dependency);
             }
         }
 
@@ -38,7 +38,7 @@ class SubmitIssueTest extends TestCase
             '2026_10_21_200002_create_memberships_table.php',
         ] as $migration) {
             if (! is_file(dirname(__DIR__, 2).'/database/migrations/'.$migration)) {
-                $this->markTestSkipped('Migration PR #18 belum tersedia: '.$migration);
+                $this->fail('Missing required Project migration after PR #18 integration: '.$migration);
             }
         }
 
@@ -84,7 +84,7 @@ class SubmitIssueTest extends TestCase
     private function requireDetectionJob(): void
     {
         if (! class_exists(DetectIssueCandidatesJob::class)) {
-            $this->markTestSkipped('Job NLP Valentino belum terintegrasi; tidak membuat Job pengganti.');
+            $this->markTestSkipped('BLOCKED_BY_NLP_QUEUE: DetectIssueCandidatesJob asli PR #22 belum terintegrasi; tanpa Job pengganti.');
         }
         $this->assertTrue(is_subclass_of(DetectIssueCandidatesJob::class, ShouldQueue::class));
     }
@@ -336,7 +336,7 @@ class SubmitIssueTest extends TestCase
     {
         $this->requireDetectionJob();
         if (! class_exists(\App\Services\NlpClient::class)) {
-            $this->markTestSkipped('NLP Client PR #16 belum terintegrasi.');
+            $this->markTestSkipped('BLOCKED_BY_NLP_QUEUE: NlpClient belum terintegrasi.');
         }
         config(['services.nlp.base_url' => 'http://nlp.test']);
         Http::fake(['*' => Http::response(['detail' => 'NLP unavailable'], 503)]);
@@ -506,7 +506,7 @@ class SubmitIssueTest extends TestCase
     {
         $this->requireDetectionJob();
         if (! class_exists(\App\Models\DuplicateCandidate::class)) {
-            $this->markTestSkipped('DuplicateCandidate from PR #22 is not integrated.');
+            $this->markTestSkipped('BLOCKED_BY_NLP_QUEUE: DuplicateCandidate from PR #22 is not integrated.');
         }
         $project = $this->makeProject();
         $reporter = $this->activeReporter($project);

@@ -1,5 +1,8 @@
 # Audit dan perbaikan lokal Submit Issue Sprint 1
 
+> Laporan historis sebelum integrasi main Reza. Untuk status terbaru setelah PR #18/#24,
+> lihat [laporan integrasi lokal](SUBMIT_ISSUE_REZA_INTEGRATION.md).
+
 Tanggal: 29 Oktober 2026. Workspace `dupissue-elsa-assist`, branch `assist/elsa-pr19`.
 HEAD awal `c57519308fd023935edfce0044db2110699edf14`, sama dengan snapshot lokal
 `origin/feature/submit-issue-complete`; worktree awal bersih.
