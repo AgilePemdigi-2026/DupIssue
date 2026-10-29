@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\IssueController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
@@ -62,8 +63,7 @@ Route::post('/logout', [LogoutController::class, 'logout'])
 |--------------------------------------------------------------------------
 | HALAMAN REPORTER
 |--------------------------------------------------------------------------
-| Sementara menggunakan placeholder.
-| Nantinya diintegrasikan dengan Project & Membership Reza.
+| Daftar project dan undangan menggunakan modul Project & Membership Reza.
 */
 
 Route::middleware(['auth', 'role:REPORTER'])
@@ -90,6 +90,16 @@ Route::middleware(['auth', 'role:MAINTAINER'])
 
     });
 
+Route::middleware('auth')->group(function () {
+    Route::get('/projects/{project}/submit', [IssueController::class, 'create'])
+        ->middleware('role:REPORTER')
+        ->name('issues.create');
+    Route::post('/projects/{project}/submit', [IssueController::class, 'store'])
+        ->middleware('role:REPORTER')
+        ->name('issues.store');
+    Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
+        ->name('issues.show');
+});
 
 /*
 |--------------------------------------------------------------------------

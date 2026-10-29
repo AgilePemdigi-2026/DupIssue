@@ -32,6 +32,15 @@ abstract class TestCase extends BaseTestCase
             'session.driver' => 'array',
             'cache.default' => 'array',
             'queue.default' => 'sync',
+            // Submit tests may run the real database worker after integration.
+            'queue.connections.database' => [
+                'driver' => 'database', 'connection' => 'sqlite', 'table' => 'jobs',
+                'queue' => 'default', 'retry_after' => 90, 'after_commit' => false,
+            ],
+            'queue.failed' => [
+                'driver' => 'database-uuids', 'database' => 'sqlite', 'table' => 'failed_jobs',
+            ],
+            'queue.batching.database' => 'sqlite',
             'mail.default' => 'array',
             'app.key' => self::$testingKey ??= 'base64:'.base64_encode(random_bytes(32)),
         ]);
