@@ -72,6 +72,7 @@
                 <p class="text-muted small">
                     Pantau issue yang dilaporkan atau kirim laporan issue baru.
                 </p>
+                @include('issues.submit-link', ['project' => $project])
                 <button class="btn btn-outline-secondary btn-sm w-100" disabled>
                     Lihat Issue (Fitur REQ-01 & REQ-02)
                 </button>

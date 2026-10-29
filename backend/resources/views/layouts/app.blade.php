@@ -55,6 +55,7 @@
                         <span class="badge bg-secondary">
                             {{ auth()->user()->role ?? 'User' }}: {{ auth()->user()->name ?? auth()->user()->email }}
                         </span>
+                        @include('partials.logout-button')
                     @endauth
                 </div>
             </div>
