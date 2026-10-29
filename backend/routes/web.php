@@ -8,14 +8,12 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| HALAMAN UTAMA
+| HALAMAN UTAMA — LANDING DUPISSUE
 |--------------------------------------------------------------------------
-| Sementara menggunakan halaman bawaan Laravel.
+| Halaman publik; tidak mengubah redirect Login, Register, atau RBAC.
 */
 
-Route::get('/', function () {
-    return view('welcome');
-})->name('home');
+Route::view('/', 'landing')->name('home');
 
 
 /*
