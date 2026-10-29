@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - DupIssue</title>
+    <link rel="icon" type="image/svg+xml" href="{{ asset('images/dupissue-logo.svg') }}">
 
     <link
         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
@@ -25,17 +26,22 @@
 
         .brand-title {
             font-weight: 700;
-            color: #2563eb;
+            color: #6f42c1;
+        }
+
+        .form-control:focus {
+            border-color: #a78bfa;
+            box-shadow: 0 0 0 0.2rem rgba(111, 66, 193, 0.16);
         }
 
         .btn-primary {
-            background-color: #2563eb;
-            border-color: #2563eb;
+            background-color: #6f42c1;
+            border-color: #6f42c1;
         }
 
         .btn-primary:hover {
-            background-color: #1d4ed8;
-            border-color: #1d4ed8;
+            background-color: #59339d;
+            border-color: #59339d;
         }
     </style>
 </head>
@@ -47,6 +53,7 @@
             <div class="card-body p-4 p-md-5">
 
                 <div class="text-center mb-4">
+                    <img src="{{ asset('images/dupissue-logo.svg') }}" alt="" width="64" height="64" class="d-block mx-auto mb-3 rounded-3">
                     <h2 class="brand-title">DupIssue</h2>
                     <p class="text-muted mb-0">
                         Masuk ke akun DupIssue Anda
