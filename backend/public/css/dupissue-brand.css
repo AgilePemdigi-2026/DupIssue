@@ -1,0 +1,84 @@
+/* DupIssue shared UI accents — scoped to the authenticated Laravel layout.
+   Restrained lavender surfaces, clear focus states, and subtle hover feedback. */
+.di-app {
+    --di-ink: #23213d;
+    --di-violet: #6f42c1;
+    --di-violet-dark: #59339d;
+    --di-stroke: #e9e3f4;
+    --di-shadow: 0 7px 24px rgba(53, 37, 108, .045);
+    color: var(--di-ink);
+    background: radial-gradient(ellipse 850px 420px at 100% 0%, rgba(111, 66, 193, .065), transparent 74%),
+                linear-gradient(180deg, #fbfaff 0, #f8f8fc 280px, #f9fafb 100%);
+}
+.di-app .navbar {
+    border-bottom-color: #ebe5f5 !important;
+    background: rgba(255, 255, 255, .97) !important;
+}
+.di-app .navbar-brand { letter-spacing: -.025em; }
+.di-app .navbar-brand img { box-shadow: 0 3px 9px rgba(80, 69, 183, .14); }
+.di-app .nav-link {
+    border-radius: 9px;
+    padding-left: .85rem !important;
+    padding-right: .85rem !important;
+    transition: background-color .18s ease, color .18s ease;
+}
+.di-app .nav-link:hover,
+.di-app .nav-link:focus-visible { background: #f3effb; color: var(--di-violet-dark); }
+.di-app main.container { position: relative; }
+.di-app .card {
+    border: 1px solid var(--di-stroke) !important;
+    border-radius: 15px;
+    box-shadow: var(--di-shadow) !important;
+    transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+@media (hover: hover) {
+    .di-app .card:hover {
+        border-color: #cfc1ec !important;
+        box-shadow: 0 11px 30px rgba(93, 60, 159, .105) !important;
+        transform: translateY(-2px);
+    }
+}
+.di-app .card-header { border-color: var(--di-stroke) !important; }
+.di-app .btn {
+    border-radius: 9px;
+    transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.di-app .btn-primary {
+    background: var(--di-violet);
+    border-color: var(--di-violet);
+}
+.di-app .btn-primary:hover,
+.di-app .btn-primary:focus-visible {
+    background: var(--di-violet-dark);
+    border-color: var(--di-violet-dark);
+    box-shadow: 0 0 0 4px rgba(111, 66, 193, .12), 0 5px 15px rgba(111, 66, 193, .13);
+}
+.di-app .btn-outline-primary {
+    color: var(--di-violet);
+    border-color: #baa6e1;
+}
+.di-app .btn-outline-primary:hover,
+.di-app .btn-outline-primary:focus-visible {
+    color: #fff;
+    background: var(--di-violet);
+    border-color: var(--di-violet);
+    box-shadow: 0 0 0 4px rgba(111, 66, 193, .11);
+}
+.di-app .btn-outline-secondary:hover { box-shadow: 0 0 0 4px rgba(111, 66, 193, .07); }
+.di-app .form-control:focus,
+.di-app .form-select:focus {
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 .2rem rgba(111, 66, 193, .13);
+}
+.di-app .table-hover > tbody > tr:hover > * { --bs-table-bg-state: #f5f0ff; }
+.di-app .bg-primary-subtle-custom { background-color: #f3effc; }
+.di-app .alert.bg-primary-subtle-custom { border-color: #e2d8f6 !important; }
+.di-app footer { border-top-color: #ece6f6 !important; }
+.di-app :where(a, button, input, select, textarea):focus-visible {
+    outline: 2px solid #8b5cf6;
+    outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .di-app .card, .di-app .btn, .di-app .nav-link { transition: none; }
+    .di-app .card:hover { transform: none; }
+}
