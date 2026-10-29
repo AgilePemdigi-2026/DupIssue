@@ -14,9 +14,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Group;
 use RuntimeException;
 use Tests\TestCase;
 
+#[Group('project-integration')]
 class SubmitIssueTest extends TestCase
 {
     // Real commits are needed; RefreshDatabase wraps tests in an outer transaction.
@@ -24,20 +26,19 @@ class SubmitIssueTest extends TestCase
 
     protected function setUp(): void
     {
-        // Stop BEFORE application setup/migrations when PR #18 is not integrated.
+        // Project is now required: fail BEFORE setup/migrations if integration regresses.
         foreach ([Project::class, Membership::class, ProjectService::class] as $dependency) {
             if (! class_exists($dependency)) {
-                $this->markTestSkipped('PR #18 belum terintegrasi: '.$dependency);
+                $this->fail('Missing required Project dependency after PR #18 integration: '.$dependency);
             }
         }
 
         foreach ([
             '2026_10_21_200001_create_projects_table.php',
             '2026_10_21_200002_create_memberships_table.php',
-            '2026_10_21_200003_create_invitations_table.php',
         ] as $migration) {
             if (! is_file(dirname(__DIR__, 2).'/database/migrations/'.$migration)) {
-                $this->markTestSkipped('Migration PR #18 belum tersedia: '.$migration);
+                $this->fail('Missing required Project migration after PR #18 integration: '.$migration);
             }
         }
 
@@ -46,7 +47,9 @@ class SubmitIssueTest extends TestCase
             config(['app.key' => 'base64:'.base64_encode(random_bytes(32))]);
         }
         Http::preventStrayRequests();
-        Http::fake();
+        // Record HTTP calls without a catch-all response that would shadow
+        // the explicit 503/success sequences used by worker tests below.
+        Http::fake([]);
     }
 
     protected function beforeRefreshingDatabase(): void
@@ -81,7 +84,7 @@ class SubmitIssueTest extends TestCase
     private function requireDetectionJob(): void
     {
         if (! class_exists(DetectIssueCandidatesJob::class)) {
-            $this->markTestSkipped('Job NLP Valentino belum terintegrasi; tidak membuat Job pengganti.');
+            $this->markTestSkipped('BLOCKED_BY_NLP_QUEUE: DetectIssueCandidatesJob asli PR #22 belum terintegrasi; tanpa Job pengganti.');
         }
         $this->assertTrue(is_subclass_of(DetectIssueCandidatesJob::class, ShouldQueue::class));
     }
@@ -131,6 +134,7 @@ class SubmitIssueTest extends TestCase
         return $reporter;
     }
 
+    #[Group('nlp-integration')]
     public function test_active_reporter_can_submit_issue_with_server_controlled_fields(): void
     {
         $this->requireDetectionJob();
@@ -156,6 +160,7 @@ class SubmitIssueTest extends TestCase
             ->assertSee('Issue berhasil dibuat')->assertSee('OPEN')->assertSee('PENDING');
         Queue::assertPushedOn('nlp', DetectIssueCandidatesJob::class,
             fn ($job) => $job->connection === 'database');
+        Queue::assertPushed(DetectIssueCandidatesJob::class, 1);
         Http::assertNothingSent();
     }
 
@@ -191,7 +196,8 @@ class SubmitIssueTest extends TestCase
     public function test_guest_is_rejected_without_requiring_a_fake_login_route(): void
     {
         $project = $this->makeProject();
-        // JSON proves auth enforcement; browser redirect still requires Joshua's login route.
+        $this->get(route('issues.create', $project))->assertRedirect(route('login'));
+        $this->post(route('issues.store', $project), $this->payload())->assertRedirect(route('login'));
         $this->getJson(route('issues.create', $project))->assertUnauthorized();
         $this->postJson(route('issues.store', $project), $this->payload())->assertUnauthorized();
         $this->assertDatabaseCount('issues', 0);
@@ -222,7 +228,6 @@ class SubmitIssueTest extends TestCase
     #[DataProvider('validLengths')]
     public function test_exact_length_limits_are_accepted(int $titleLength, int $descriptionLength): void
     {
-        $this->requireDetectionJob();
         Queue::fake();
         $project = $this->makeProject();
         $this->actingAs($this->activeReporter($project))->post(route('issues.store', $project), [
@@ -260,6 +265,7 @@ class SubmitIssueTest extends TestCase
         $this->assertDatabaseCount('issues', 0);
     }
 
+    #[Group('nlp-integration')]
     public function test_database_job_is_only_enqueued_after_outer_commit(): void
     {
         $this->requireDetectionJob();
@@ -287,6 +293,7 @@ class SubmitIssueTest extends TestCase
         Http::assertNothingSent();
     }
 
+    #[Group('nlp-integration')]
     public function test_rollback_does_not_enqueue_detection(): void
     {
         $this->requireDetectionJob();
@@ -301,8 +308,13 @@ class SubmitIssueTest extends TestCase
         }
         $this->assertDatabaseCount('issues', 0);
         $this->assertDatabaseCount('jobs', 0);
+        // A later successful transaction must not revive the rolled-back callback.
+        $this->post(route('issues.store', $project), $this->payload())->assertRedirect();
+        $this->assertDatabaseCount('issues', 1);
+        $this->assertDatabaseCount('jobs', 1);
     }
 
+    #[Group('nlp-integration')]
     public function test_enqueue_failure_keeps_the_committed_issue(): void
     {
         $this->requireDetectionJob();
@@ -319,11 +331,12 @@ class SubmitIssueTest extends TestCase
         Http::assertNothingSent();
     }
 
+    #[Group('nlp-integration')]
     public function test_nlp_worker_failure_does_not_delete_the_issue(): void
     {
         $this->requireDetectionJob();
         if (! class_exists(\App\Services\NlpClient::class)) {
-            $this->markTestSkipped('NLP Client PR #16 belum terintegrasi.');
+            $this->markTestSkipped('BLOCKED_BY_NLP_QUEUE: NlpClient belum terintegrasi.');
         }
         config(['services.nlp.base_url' => 'http://nlp.test']);
         Http::fake(['*' => Http::response(['detail' => 'NLP unavailable'], 503)]);
@@ -343,14 +356,196 @@ class SubmitIssueTest extends TestCase
         $issue = Issue::query()->whereKeyNot($candidate->id)->sole();
         Http::assertNothingSent();
 
-        $this->artisan('queue:work', [
-            'connection' => 'database', '--queue' => 'nlp', '--once' => true,
-            '--tries' => 1, '--sleep' => 0, '--force' => true,
-        ])->assertExitCode(0);
+        // Job::$tries takes precedence over --tries. Exercise all real attempts,
+        // advancing only the test clock through the job's configured backoff.
+        $job = new DetectIssueCandidatesJob($issue->id);
+        $this->assertSame(3, $job->tries);
+        try {
+            for ($attempt = 1; $attempt <= $job->tries; $attempt++) {
+                $this->runNlpWorkerOnce();
+                if ($attempt < $job->tries) {
+                    $this->assertSame('PROCESSING', $issue->refresh()->detection_status);
+                    $this->assertDatabaseCount('failed_jobs', 0);
+                    $this->assertDatabaseCount('jobs', 1);
+                    $this->travel($job->backoff()[$attempt - 1] + 1)->seconds();
+                }
+            }
+        } finally {
+            $this->travelBack();
+        }
 
         Http::assertSent(fn ($request) => str_starts_with($request->url(), 'http://nlp.test/'));
         $this->assertDatabaseHas('issues', [
             'id' => $issue->id, 'status' => 'OPEN', 'detection_status' => 'FAILED',
         ]);
+        $this->assertDatabaseCount('jobs', 0);
+        $this->assertDatabaseCount('failed_jobs', 1);
+    }
+
+    private function runNlpWorkerOnce(): void
+    {
+        $this->artisan('queue:work', [
+            'connection' => 'database', '--queue' => 'nlp', '--once' => true,
+            '--sleep' => 0, '--force' => true,
+        ])->assertExitCode(0);
+    }
+
+    public function test_missing_job_keeps_issue_and_marks_detection_failed(): void
+    {
+        if (class_exists(DetectIssueCandidatesJob::class)) {
+            $this->markTestSkipped('Only applicable before the real NLP Job is integrated.');
+        }
+        $project = $this->makeProject();
+        $reporter = $this->activeReporter($project);
+        $this->actingAs($reporter)->post(route('issues.store', $project), $this->payload() + [
+            'project_id' => 999, 'author_id' => 999, 'status' => 'DUPLICATE',
+            'source_type' => 'GITHUB', 'vote_count' => 999, 'duplicate_of' => 999,
+            'detection_status' => 'COMPLETED',
+        ])->assertRedirect();
+        $this->assertDatabaseCount('issues', 1);
+        $this->assertDatabaseHas('issues', [
+            'project_id' => $project->id, 'author_id' => $reporter->id,
+            'status' => 'OPEN', 'detection_status' => 'FAILED',
+            'source_type' => 'FORM', 'vote_count' => 0, 'duplicate_of' => null,
+        ]);
+        $this->assertDatabaseCount('jobs', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_inactive_reporter_cannot_read_even_their_own_issue(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->activeReporter($project);
+        $issue = new Issue($this->payload());
+        $issue->project()->associate($project);
+        $issue->author()->associate($reporter);
+        $issue->save();
+        $project->memberships()->where('user_id', $reporter->id)->update(['is_active' => false]);
+
+        $this->actingAs($reporter)->get(route('issues.show', ['project' => $project, 'issue' => $issue]))
+            ->assertForbidden();
+    }
+
+    public function test_failed_issue_insert_rolls_back_without_dispatch(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->activeReporter($project);
+        Queue::fake();
+        Issue::creating(fn () => throw new RuntimeException('Issue insert failed'));
+        $this->withoutExceptionHandling();
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Issue insert failed');
+        try {
+            $this->actingAs($reporter)->post(route('issues.store', $project), $this->payload());
+        } finally {
+            $this->assertSame(0, DB::transactionLevel());
+            $this->assertDatabaseCount('issues', 0);
+            $this->assertDatabaseCount('jobs', 0);
+            Queue::assertNothingPushed();
+            Http::assertNothingSent();
+        }
+    }
+
+    public function test_submit_views_render_and_escape_issue_content(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->activeReporter($project);
+        $issue = new Issue([
+            'title' => '<script>alert(1)</script>',
+            'description' => '<script>alert(2)</script>',
+        ]);
+        $issue->project()->associate($project);
+        $issue->author()->associate($reporter);
+        $issue->save();
+
+        $this->actingAs($reporter)->get(route('issues.create', $project))->assertOk();
+        $this->get(route('issues.show', ['project' => $project, 'issue' => $issue]))
+            ->assertOk()->assertSee($issue->title)->assertSee($issue->description)
+            ->assertDontSee('<script>alert(', false);
+        $this->actingAs($project->owner)
+            ->get(route('issues.show', ['project' => $project, 'issue' => $issue]))
+            ->assertOk()->assertDontSee('Buat Issue Lagi');
+    }
+
+    #[Group('nlp-integration')]
+    public function test_non_database_queue_configuration_cannot_run_nlp_inline(): void
+    {
+        $this->requireDetectionJob();
+        $project = $this->makeProject();
+        config(['queue.connections.database.driver' => 'sync']);
+        $this->actingAs($this->activeReporter($project))
+            ->post(route('issues.store', $project), $this->payload())->assertRedirect();
+        $this->assertSame('FAILED', Issue::query()->sole()->detection_status);
+        $this->assertDatabaseCount('jobs', 0);
+        Http::assertNothingSent();
+    }
+
+    #[Group('nlp-integration')]
+    public function test_secondary_failure_updating_detection_status_does_not_fail_submit(): void
+    {
+        $this->requireDetectionJob();
+        $project = $this->makeProject();
+        $reporter = $this->activeReporter($project);
+        Queue::shouldReceive('connection')->once()->with('database')
+            ->andThrow(new RuntimeException('Queue unavailable'));
+        DB::connection()->beforeExecuting(function (string $query): void {
+            if (str_starts_with($query, 'update "issues"')) {
+                throw new RuntimeException('Status storage unavailable');
+            }
+        });
+
+        $this->actingAs($reporter)->post(route('issues.store', $project), $this->payload())->assertRedirect();
+        $this->assertDatabaseHas('issues', ['status' => 'OPEN', 'detection_status' => 'PENDING']);
+        $this->assertDatabaseCount('issues', 1);
+        $this->assertDatabaseCount('jobs', 0);
+        Http::assertNothingSent();
+    }
+
+    #[Group('nlp-integration')]
+    public function test_retry_can_complete_and_redelivery_does_not_duplicate_candidates(): void
+    {
+        $this->requireDetectionJob();
+        if (! class_exists(\App\Models\DuplicateCandidate::class)) {
+            $this->markTestSkipped('BLOCKED_BY_NLP_QUEUE: DuplicateCandidate from PR #22 is not integrated.');
+        }
+        $project = $this->makeProject();
+        $reporter = $this->activeReporter($project);
+        $candidate = new Issue($this->payload());
+        $candidate->project()->associate($project);
+        $candidate->author()->associate($reporter);
+        $candidate->detection_status = 'COMPLETED';
+        $candidate->save();
+        config(['services.nlp.base_url' => 'http://nlp.test']);
+        Http::fake(['http://nlp.test/candidates' => Http::sequence()
+            ->push(['detail' => 'Unavailable'], 503)
+            ->push(['candidates' => [['issue_id' => $candidate->id, 'similarity' => 0.9]]])]);
+
+        $this->actingAs($reporter)->post(route('issues.store', $project), $this->payload())->assertRedirect();
+        $issue = Issue::query()->whereKeyNot($candidate->id)->sole();
+        Http::assertNothingSent();
+        $this->runNlpWorkerOnce();
+        $this->assertSame('PROCESSING', $issue->refresh()->detection_status);
+        $this->assertDatabaseCount('failed_jobs', 0);
+        $job = new DetectIssueCandidatesJob($issue->id);
+        try {
+            $this->travel($job->backoff()[0] + 1)->seconds();
+            $this->runNlpWorkerOnce();
+        } finally {
+            $this->travelBack();
+        }
+
+        $this->assertSame('COMPLETED', $issue->refresh()->detection_status);
+        $this->assertSame('OPEN', $issue->status);
+        $this->assertDatabaseCount('duplicate_candidates', 1);
+        $this->assertDatabaseHas('duplicate_candidates', [
+            'issue_id' => $issue->id, 'candidate_issue_id' => $candidate->id,
+        ]);
+        Queue::connection('database')->pushOn('nlp', new DetectIssueCandidatesJob($issue->id));
+        $this->runNlpWorkerOnce();
+        $this->assertDatabaseCount('duplicate_candidates', 1);
+        $this->assertDatabaseCount('issues', 2);
+        $this->assertDatabaseCount('jobs', 0);
+        $this->assertDatabaseCount('failed_jobs', 0);
+        Http::assertSentCount(2);
     }
 }

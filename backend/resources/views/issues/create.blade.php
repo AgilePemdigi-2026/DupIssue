@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends(view()->exists('layouts.app') ? 'layouts.app' : 'issues.layout')
 
 @section('title', 'Submit Issue — DupIssue')
 
@@ -30,7 +30,7 @@
                 @error('description') <div class="invalid-feedback">{{ $message }}</div> @enderror
             </div>
             <button type="submit" class="btn btn-primary">Kirim Issue</button>
-            <a href="{{ route('projects.show', ['id' => $project->id]) }}" class="btn btn-outline-secondary">Batal</a>
+            @include('issues.project-link', ['label' => 'Batal'])
         </form>
     </div>
 </div>
