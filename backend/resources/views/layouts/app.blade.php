@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>@yield('title', 'DupIssue - Sistem Deteksi Duplikasi Issue')</title>
     <link rel="icon" type="image/svg+xml" href="{{ asset('images/dupissue-logo.svg') }}">
+    <link rel="stylesheet" href="{{ asset('css/dupissue-brand.css') }}">
     <!-- Bootstrap 5.3 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
@@ -30,7 +31,7 @@
         }
     </style>
 </head>
-<body class="bg-light min-vh-100 d-flex flex-column">
+<body class="di-app bg-light min-vh-100 d-flex flex-column">
     <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom shadow-sm">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center gap-2" href="/projects">
