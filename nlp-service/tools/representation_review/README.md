@@ -37,3 +37,21 @@ python3 -B -m unittest discover -s nlp-service/tools/representation_review -p 't
 ```
 
 These checks are structural tests. They are not evidence of model accuracy, correctness of human judgments, rights clearance, or experiment authorization. Phase 8A remains frozen; authorization, tokenization, and inference remain blocked. Any later revision requires new private corpus version, integrity/privacy review, refrozen protocol/seal, and fresh explicit authorization.
+
+## Controlled corpus-revision preflight (after all human decisions are recorded)
+
+`revision_preflight.py` provides a **read-only, fail-closed** follow-up. It binds the completed local review CSV to the exact Phase 8A audit, checks the Phase 8A input manifest against the frozen Phase 7D corpus manifest, and optionally verifies all 33 private snapshots on disk (hash, file and directory permissions, and declared roots). It prints issue IDs, decision counts and cryptographic hashes **without any issue text**.
+
+From `~/Developer/dupissue-kelompok4`, after pulling the latest branch:
+
+```bash
+python3 -B nlp-service/tools/representation_review/revision_preflight.py \
+  --phase8a ../dupissue-nlp-evaluation/nlp-service/evaluation/phase8a-20261031 \
+  --phase7d ../dupissue-nlp-evaluation/nlp-service/evaluation/phase7d-20261031 \
+  --review ../dupissue-nlp-evaluation/nlp-service/evaluation/phase8b-review-20261031/REPRESENTATION_REVIEW.csv \
+  --verify-snapshots
+```
+
+Exit code `0` indicates a successful **preparation check only**. Without `--verify-snapshots`, exit code `2` intentionally signals `SNAPSHOT_VERIFICATION_REQUIRED`; failed bindings or snapshot checks exit `3`. No corpus revision is produced, no private file is written, and all authorization fields stay `false`.
+
+The six `REQUEST_REVISION` items still require manually reviewed, evidence-supported minimized candidate text, with a separate rights/privacy determination for the **new** representation; the seven `RETAIN_WITH_RISK` items require limitations to be preserved in the next protocol. Do not treat `rights_privacy_reviewed=YES` in the CSV as a global rights clearance or as approval to run tokenization or inference. Candidate creation, hashing, versioned manifests, regression tests, refreeze and specific human experiment authorization are separate later gates.
