@@ -97,6 +97,28 @@ class CandidateWorkspaceTests(unittest.TestCase):
             self.init()
         self.assertFalse(self.dest.exists())
 
+    def test_parent_symlink_alias_to_safe_directory_allowed(self):
+        # Mirrors macOS /var -> /private/var temporary-dir alias behavior.
+        real_parent = self.base / 'real-private-parent'
+        real_parent.mkdir(mode=0o700)
+        alias = self.base / 'safe-parent-alias'
+        alias.symlink_to(real_parent, target_is_directory=True)
+        self.dest = alias / 'drafts'
+        response = self.init()
+        self.assertEqual((real_parent / 'drafts').resolve(), Path(response['output_root']))
+        self.assertEqual('DRAFTS_INCOMPLETE', self.check()['status'])
+
+    def test_parent_symlink_alias_into_git_repo_blocked(self):
+        repo = self.base / 'git-target'
+        repo.mkdir()
+        (repo / '.git').mkdir()
+        alias = self.base / 'git-parent-alias'
+        alias.symlink_to(repo, target_is_directory=True)
+        self.dest = alias / 'drafts'
+        with self.assertRaisesRegex(ValueError, 'Git worktree'):
+            self.init()
+        self.assertFalse((repo / 'drafts').exists())
+
     def test_review_change_blocked(self):
         self.init()
         self.review.write_text('changed-review')
