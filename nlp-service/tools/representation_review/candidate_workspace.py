@@ -34,10 +34,16 @@ def secure_write(path: Path, content: bytes) -> None:
 
 def safe_root(output_root: Path, phase7d: Path, phase8a: Path, review: Path) -> Path:
     """Require a new, non-repository directory outside all frozen/review paths."""
-    out = output_root.expanduser().absolute()
+    # macOS commonly exposes temporary directories through /var -> /private/var.
+    # Canonicalize the existing parent before applying containment/Git checks,
+    # while still rejecting any existing (including symlinked) final directory.
+    requested = output_root.expanduser().absolute()
+    if requested.exists() or requested.is_symlink():
+        raise ValueError("draft output directory already exists; do not overwrite")
+    parent = requested.parent.resolve(strict=True)
+    out = parent / requested.name
     if out.exists() or out.is_symlink():
         raise ValueError("draft output directory already exists; do not overwrite")
-    parent = out.parent.resolve(strict=True)
     for ancestor in (parent, *parent.parents):
         if (ancestor / ".git").exists():
             raise ValueError("drafts must not be created inside a Git worktree")
@@ -45,8 +51,6 @@ def safe_root(output_root: Path, phase7d: Path, phase8a: Path, review: Path) -> 
         actual = source.resolve(strict=True)
         if out.is_relative_to(actual) or actual.is_relative_to(out):
             raise ValueError("draft directory overlaps existing frozen/review sources")
-    if out.parent != parent:
-        raise ValueError("draft parent must not be a symlink")
     return out
 
 
