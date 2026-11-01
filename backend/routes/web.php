@@ -95,6 +95,8 @@ Route::middleware('auth')->group(function () {
     Route::post('/projects/{project}/submit', [IssueController::class, 'store'])
         ->middleware('role:REPORTER')
         ->name('issues.store');
+    Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
+        ->name('issues.index');
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show');
 });
