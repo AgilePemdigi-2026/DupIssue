@@ -166,7 +166,10 @@ class DetectIssueCandidatesJob implements ShouldQueue
                 return;
             }
 
-            DuplicateCandidate::query()->where('issue_id', $issue->getKey())->delete();
+            // Keep human-reviewed pairs if the failed NLP detection is retried.
+            // Only unreviewed suggestions may be replaced.
+            DuplicateCandidate::query()->where('issue_id', $issue->getKey())
+                ->where('decision', 'PENDING')->delete();
 
             foreach ($results as $result) {
                 DuplicateCandidate::query()->updateOrCreate(
