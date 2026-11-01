@@ -13,8 +13,8 @@
         <p>{{ $issue->description }}</p>
         <p><strong>Status:</strong> {{ $issue->status }}</p>
         <p><strong>Status deteksi NLP:</strong> {{ $issue->detection_status }}</p>
-        @if (session('success'))
-            <div class="alert alert-success" role="status">{{ session('success') }}</div>
+        @if (session('status_notice'))
+            <div class="alert alert-info" role="status">{{ session('status_notice') }}</div>
         @endif
         @if ($issue->duplicate_of)
             <div class="alert alert-warning" role="status">
@@ -32,6 +32,26 @@
                     <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Batalkan penandaan duplikat dan kembalikan status menjadi OPEN?')">Konfirmasi Pembatalan</button>
                 </form>
             @endif
+        @endif
+        @if (auth()->user()->role === 'MAINTAINER'
+            && (int) $project->owner_id === (int) auth()->id()
+            && $issue->duplicate_of === null && $issue->status !== 'DUPLICATE')
+            @php $legalStatuses = \App\Http\Controllers\IssueStatusController::allowedTransitions($issue->status); @endphp
+            <form action="{{ route('issues.status.preview', ['project' => $project, 'issue' => $issue]) }}" method="POST" class="border rounded p-3 mb-3">
+                @csrf
+                <h2 class="h6">Ubah Status</h2>
+                <input type="hidden" name="expected_status" value="{{ $issue->status }}">
+                <input type="hidden" name="expected_updated_at" value="{{ $issue->getRawOriginal('updated_at') ?? '' }}">
+                <label for="new-status" class="form-label">Status Tujuan</label>
+                <select id="new-status" class="form-select mb-2" name="new_status">
+                    <option value="{{ $issue->status }}">{{ $issue->status }} (saat ini)</option>
+                    @foreach ($legalStatuses as $choice)
+                        <option value="{{ $choice }}">{{ $choice }}</option>
+                    @endforeach
+                </select>
+                <p class="text-muted small">Transisi yang diizinkan: {{ count($legalStatuses) ? implode(', ', $legalStatuses) : 'Tidak ada' }}.</p>
+                <button type="submit" class="btn btn-outline-primary btn-sm">Simpan Status</button>
+            </form>
         @endif
         @if ($errors->any())
             <div class="alert alert-danger" role="alert">
@@ -111,6 +131,17 @@
                     <li class="list-group-item">
                         <strong>{{ $event->action }}</strong> · {{ $event->created_at }} · User #{{ $event->user_id }}
                         @if ($event->reason) <p class="mb-0">Alasan: {{ $event->reason }}</p> @endif
+                    </li>
+                @endforeach
+            </ul>
+        @endif
+        @if ($statusHistory->isNotEmpty())
+            <h2 class="h6 mt-4">Riwayat Status</h2>
+            <ul class="list-group mb-3">
+                @foreach ($statusHistory as $entry)
+                    <li class="list-group-item">
+                        <strong>{{ $entry->action }}</strong> · {{ $entry->created_at }}
+                        @if ($entry->reason)<p class="mb-0">{{ $entry->reason }}</p>@endif
                     </li>
                 @endforeach
             </ul>
