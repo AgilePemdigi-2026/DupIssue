@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\IssueController;
+use App\Http\Controllers\DuplicateReviewController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
@@ -99,6 +100,14 @@ Route::middleware('auth')->group(function () {
         ->name('issues.index');
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show');
+    Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
+        [DuplicateReviewController::class, 'decide'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.decide');
+    Route::post('/projects/{project}/issues/{issue}/duplicate/cancel',
+        [DuplicateReviewController::class, 'cancel'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.cancel');
 });
 
 /*

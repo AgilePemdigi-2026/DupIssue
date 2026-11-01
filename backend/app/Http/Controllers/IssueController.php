@@ -140,11 +140,19 @@ class IssueController extends Controller
         $recommendations = DuplicateCandidate::query()
             ->where('issue_id', $issue->getKey())
             ->whereHas('candidateIssue', fn ($query) => $query->where('project_id', $project->getKey()))
-            ->with('candidateIssue:id,project_id,title')
+            ->with('candidateIssue')
             ->orderByDesc('similarity_score')
             ->limit(10)
             ->get();
 
-        return view('issues.show', compact('project', 'issue', 'recommendations'));
+        $reviewHistory = collect();
+        if ($user->role === 'MAINTAINER' && (int) $project->owner_id === (int) $user->id) {
+            $reviewHistory = DB::table('activity_logs')
+                ->where('project_id', $project->id)->where('issue_id', $issue->id)
+                ->whereIn('action', ['DUPLICATE_REVIEW', 'DUPLICATE_CORRECTED'])
+                ->orderByDesc('id')->limit(20)->get();
+        }
+
+        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory'));
     }
 }
