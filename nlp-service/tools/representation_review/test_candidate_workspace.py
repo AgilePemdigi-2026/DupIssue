@@ -119,6 +119,19 @@ class CandidateWorkspaceTests(unittest.TestCase):
             self.init()
         self.assertFalse((repo / 'drafts').exists())
 
+    def test_finder_metadata_is_ignored(self):
+        self.init()
+        (self.dest / 'drafts' / '.DS_Store').write_bytes(b'synthetic Finder metadata')
+        result = self.check()
+        self.assertEqual('DRAFTS_INCOMPLETE', result['status'])
+        self.assertEqual(6, result['unchanged_count'])
+
+    def test_unknown_extra_draft_is_blocked(self):
+        self.init()
+        (self.dest / 'drafts' / 'unexpected-copy.txt').write_text('synthetic data')
+        with self.assertRaisesRegex(ValueError, 'unexpected files'):
+            self.check()
+
     def test_review_change_blocked(self):
         self.init()
         self.review.write_text('changed-review')
