@@ -207,7 +207,11 @@ def check_workspace(phase8a: Path, phase7d: Path, review: Path, output_root: Pat
         raise ValueError("missing staged Issue")
     actual_files = {f.name for f in (out / "drafts").iterdir()}
     required_files = {row["draft_path"].split("/")[-1] for row in entries}
-    if actual_files != required_files:
+    # Finder may create .DS_Store when the private drafts folder is opened on
+    # macOS. It is not an Issue draft, so ignore only this known metadata file.
+    # All other unexpected files (including duplicate .txt drafts) still fail.
+    finder_metadata = {".DS_Store"}
+    if (actual_files - finder_metadata) != required_files:
         raise ValueError("unexpected files in draft directory")
     return {
         "status": "DRAFTS_EDITED_MANUAL_REVIEW_REQUIRED" if len(unchanged) == 0 else "DRAFTS_INCOMPLETE",
