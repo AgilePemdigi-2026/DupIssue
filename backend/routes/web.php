@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\IssueController;
 use App\Http\Controllers\DuplicateReviewController;
+use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
@@ -108,6 +109,14 @@ Route::middleware('auth')->group(function () {
         [DuplicateReviewController::class, 'cancel'])
         ->middleware('role:MAINTAINER')
         ->name('issues.duplicates.cancel');
+    Route::post('/projects/{project}/issues/{issue}/status/preview',
+        [IssueStatusController::class, 'preview'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.status.preview');
+    Route::post('/projects/{project}/issues/{issue}/status/confirm',
+        [IssueStatusController::class, 'confirm'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.status.confirm');
 });
 
 /*

@@ -153,6 +153,11 @@ class IssueController extends Controller
                 ->orderByDesc('id')->limit(20)->get();
         }
 
-        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory'));
+        $statusHistory = DB::table('activity_logs')
+            ->where('project_id', $project->id)->where('issue_id', $issue->id)
+            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
+            ->orderByDesc('id')->limit(20)->get();
+
+        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory'));
     }
 }
