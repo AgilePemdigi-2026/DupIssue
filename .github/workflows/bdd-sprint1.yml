@@ -73,6 +73,7 @@ jobs:
           echo "No development database, FastAPI live service, or PHPUnit execution."
 
       - name: Execute Sprint 1 BDD acceptance tests
+        id: run_bdd
         shell: bash
         env:
           APP_ENV: behat
@@ -81,35 +82,60 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ../bdd-evidence
-          vendor/bin/behat --suite=sprint1 --format=progress 2>&1 | tee ../bdd-evidence/behat-sprint1.log
+          # Run Behat once. Pretty prints each scenario and every Given/When/Then step.
+          # Capture the true exit code with pipefail: failed BDD always fails the job.
+          vendor/bin/behat --suite=sprint1 --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-sprint1.log
 
-      - name: Publish Behat result summary
+      - name: Publish full BDD scenario evidence
         if: always()
         shell: bash
+        env:
+          BDD_OUTCOME: ${{ steps.run_bdd.outcome }}
         run: |
+          set -euo pipefail
+          mkdir -p ../bdd-evidence
+          report=../bdd-evidence/BDD_REPORT.md
           {
             echo '## Sprint 1 — BDD Testing (Behat + Mink)'
             echo ''
-            echo 'Scope: Submit Issue, Deteksi Kemiripan NLP, Lihat Status Issue.'
+            echo "**GitHub Actions result:** ${BDD_OUTCOME}"
             echo ''
-            echo 'Command: `vendor/bin/behat --suite=sprint1 --format=progress`'
+            echo '**Tested flows:** Submit Issue, Deteksi Kemiripan NLP, Lihat Status Issue.'
+            echo ''
+            echo 'Run command: `vendor/bin/behat --suite=sprint1 --format=pretty --no-colors`'
             echo ''
             if [ -f ../bdd-evidence/behat-sprint1.log ]; then
+              echo '### Test totals'
+              echo ''
               echo '```text'
-              tail -n 25 ../bdd-evidence/behat-sprint1.log
+              grep -E '^[0-9]+ scenarios? \(|^[0-9]+ steps? \(' ../bdd-evidence/behat-sprint1.log || true
               echo '```'
+              echo ''
+              echo '### Scenarios executed'
+              echo ''
+              grep -E '^[[:space:]]*(Scenario:|Scenario Outline:|Example:)' ../bdd-evidence/behat-sprint1.log | sed -E 's/^[[:space:]]*/- /' || true
+              echo ''
+              echo '<details><summary>Full Behat execution: scenarios and Given/When/Then steps</summary>'
+              echo ''
+              echo '```gherkin'
+              cat ../bdd-evidence/behat-sprint1.log
+              echo '```'
+              echo ''
+              echo '</details>'
             else
-              echo 'Behat was not run; inspect earlier setup steps for errors.'
+              echo '**No BDD execution log was generated.** Inspect preceding setup steps.'
             fi
             echo ''
-            echo 'Only Behat/Mink BDD is executed; PHPUnit is not run.'
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo '**Testing method:** Behat + Mink BDD only. No PHPUnit commands.'
+            echo ''
+            echo 'Evidence files are also uploaded below as a downloadable GitHub Actions artifact.'
+          } | tee "$report" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload BDD execution log as GitHub evidence
+      - name: Upload detailed BDD evidence to GitHub
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bdd-sprint1-behat-results
-          path: bdd-evidence/behat-sprint1.log
+          path: bdd-evidence/
           if-no-files-found: warn
           retention-days: 30
