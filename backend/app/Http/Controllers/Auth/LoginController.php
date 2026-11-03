@@ -38,6 +38,7 @@ class LoginController extends Controller
 
         // Mencegah session fixation.
         $request->session()->regenerate();
+        $request->session()->put('auth_version', (int) Auth::user()->auth_version);
 
         // Mengarahkan pengguna sesuai role.
         return match (Auth::user()->role) {

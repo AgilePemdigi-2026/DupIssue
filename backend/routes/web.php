@@ -1,8 +1,10 @@
+
 <?php
 
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\Auth\PasswordResetOtpController;
 use App\Http\Controllers\IssueController;
 use App\Http\Controllers\DuplicateReviewController;
 use App\Http\Controllers\IssueStatusController;
@@ -12,7 +14,7 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| HALAMAN UTAMA — LANDING DUPISSUE
+| HALAMAN UTAMA
 |--------------------------------------------------------------------------
 */
 
@@ -34,18 +36,49 @@ Route::post('/register', [RegisterController::class, 'store'])
 
 /*
 |--------------------------------------------------------------------------
-| LOGIN
+| LOGIN & FORGOT PASSWORD OTP
 |--------------------------------------------------------------------------
 */
 
 Route::middleware('guest')->group(function () {
 
+    // LOGIN
     Route::get('/login', [LoginController::class, 'show'])
         ->name('login');
 
     Route::post('/login', [LoginController::class, 'authenticate'])
         ->middleware('throttle:5,1')
         ->name('login.authenticate');
+
+    // FORGOT PASSWORD - OTP
+    Route::get('/forgot-password',
+        [PasswordResetOtpController::class, 'requestForm'])
+        ->name('password.request');
+
+    Route::post('/forgot-password',
+        [PasswordResetOtpController::class, 'sendOtp'])
+        ->middleware('throttle:5,1')
+        ->name('password.otp.send');
+
+    // VERIFIKASI OTP
+    Route::get('/verify-otp',
+        [PasswordResetOtpController::class, 'verifyForm'])
+        ->name('password.otp.form');
+
+    Route::post('/verify-otp',
+        [PasswordResetOtpController::class, 'verifyOtp'])
+        ->middleware('throttle:10,1')
+        ->name('password.otp.verify');
+
+    // PASSWORD BARU
+    Route::get('/reset-password',
+        [PasswordResetOtpController::class, 'resetForm'])
+        ->name('password.reset.form');
+
+    Route::post('/reset-password',
+        [PasswordResetOtpController::class, 'update'])
+        ->middleware('throttle:5,1')
+        ->name('password.update');
 
 });
 
@@ -97,7 +130,7 @@ Route::middleware(['auth', 'role:MAINTAINER'])->group(function () {
 
 Route::middleware('auth')->group(function () {
 
-    // Submit Issue
+    // SUBMIT ISSUE
     Route::get('/projects/{project}/submit', [IssueController::class, 'create'])
         ->middleware('role:REPORTER')
         ->name('issues.create');
@@ -106,28 +139,28 @@ Route::middleware('auth')->group(function () {
         ->middleware('role:REPORTER')
         ->name('issues.store');
 
-    // Issue List
+    // ISSUE LIST
     Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
         ->name('issues.index');
 
-    // Issue Detail
+    // ISSUE DETAIL
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show');
 
 
     /*
     |--------------------------------------------------------------------------
-    | FEATURE 9 — VOTE ISSUE
+    | FEATURE 9 - VOTE ISSUE
     |--------------------------------------------------------------------------
     */
 
-    // Memberikan vote
+    // MEMBERIKAN VOTE
     Route::post(
         '/projects/{project}/issues/{issue}/vote',
         [VoteController::class, 'store']
     )->name('issues.vote');
 
-    // Membatalkan vote
+    // MEMBATALKAN VOTE
     Route::delete(
         '/projects/{project}/issues/{issue}/vote',
         [VoteController::class, 'destroy']
@@ -180,13 +213,13 @@ Route::middleware('auth')->group(function () {
 
 /*
 |--------------------------------------------------------------------------
-| REQ-03: MENGELOLA PROJECT & ANGGOTA (FAKHRI REZA)
+| PROJECT MANAGEMENT & MEMBERSHIP
 |--------------------------------------------------------------------------
 */
 
 Route::middleware(['auth'])->group(function () {
 
-    // Project Management
+    // PROJECT MANAGEMENT
     Route::get('/projects', [ProjectMemberController::class, 'index'])
         ->name('projects.index');
 
@@ -208,7 +241,7 @@ Route::middleware(['auth'])->group(function () {
     Route::put('/projects/{id}/settings', [ProjectMemberController::class, 'update']);
 
 
-    // Membership & Invitation Management
+    // MEMBERSHIP & INVITATION MANAGEMENT
     Route::get('/projects/{id}/members', [ProjectMemberController::class, 'members'])
         ->name('projects.members');
 
@@ -222,7 +255,7 @@ Route::middleware(['auth'])->group(function () {
         ->name('projects.members.remove');
 
 
-    // Reporter Invitations
+    // REPORTER INVITATIONS
     Route::get('/invitations', [ProjectMemberController::class, 'reporterInvitations'])
         ->name('invitations.index');
 
