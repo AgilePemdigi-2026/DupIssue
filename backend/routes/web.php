@@ -1,7 +1,10 @@
 <?php
 
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\PasswordResetOtpController;
 use App\Http\Controllers\IssueController;
+use App\Http\Controllers\DuplicateReviewController;
+use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
@@ -42,14 +45,46 @@ Route::post('/register', [RegisterController::class, 'store'])
 
 Route::middleware('guest')->group(function () {
 
-    // Menampilkan halaman Login.
+    // LOGIN
     Route::get('/login', [LoginController::class, 'show'])
         ->name('login');
 
-    // Memproses Login dengan pembatasan percobaan.
     Route::post('/login', [LoginController::class, 'authenticate'])
         ->middleware('throttle:5,1')
         ->name('login.authenticate');
+    
+    // FORGOT PASSWORD - OTP
+
+    Route::get('/forgot-password',
+        [PasswordResetOtpController::class, 'requestForm'])
+        ->name('password.request');
+
+    Route::post('/forgot-password',
+        [PasswordResetOtpController::class, 'sendOtp'])
+        ->middleware('throttle:5,1')
+        ->name('password.otp.send');
+
+    // VERIFIKASI OTP
+
+    Route::get('/verify-otp',
+        [PasswordResetOtpController::class, 'verifyForm'])
+        ->name('password.otp.form');
+
+    Route::post('/verify-otp',
+        [PasswordResetOtpController::class, 'verifyOtp'])
+        ->middleware('throttle:10,1')
+        ->name('password.otp.verify');
+
+    // PASSWORD BARU
+
+    Route::get('/reset-password',
+        [PasswordResetOtpController::class, 'resetForm'])
+        ->name('password.reset.form');
+
+    Route::post('/reset-password',
+        [PasswordResetOtpController::class, 'update'])
+        ->middleware('throttle:5,1')
+        ->name('password.update');
 
 });
 
@@ -95,8 +130,26 @@ Route::middleware('auth')->group(function () {
     Route::post('/projects/{project}/submit', [IssueController::class, 'store'])
         ->middleware('role:REPORTER')
         ->name('issues.store');
+    Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
+        ->name('issues.index');
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show');
+    Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
+        [DuplicateReviewController::class, 'decide'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.decide');
+    Route::post('/projects/{project}/issues/{issue}/duplicate/cancel',
+        [DuplicateReviewController::class, 'cancel'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.cancel');
+    Route::post('/projects/{project}/issues/{issue}/status/preview',
+        [IssueStatusController::class, 'preview'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.status.preview');
+    Route::post('/projects/{project}/issues/{issue}/status/confirm',
+        [IssueStatusController::class, 'confirm'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.status.confirm');
 });
 
 /*

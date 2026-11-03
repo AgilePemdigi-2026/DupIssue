@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\DetectIssueCandidatesJob;
+use App\Models\DuplicateCandidate;
 use App\Models\Issue;
 use App\Models\Project;
 use App\Services\ProjectService;
@@ -104,6 +105,24 @@ class IssueController extends Controller
             ->with('success', 'Issue berhasil dibuat');
     }
 
+    public function index(Request $request, Project $project): View
+    {
+        $user = $request->user();
+        abort_unless($user && $this->projects->canAccessProject($user, $project), 403, 'Akses tidak tersedia');
+        if ($user->role === 'REPORTER') {
+            $this->authorizeReporter($request, $project);
+        }
+
+        // Scope every row to the project after checking the viewer's access.
+        $issues = Issue::query()
+            ->where('project_id', $project->getKey())
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->paginate(15);
+
+        return view('issues.index', compact('project', 'issues'));
+    }
+
     public function show(Request $request, Project $project, Issue $issue): View
     {
         $user = $request->user();
@@ -116,6 +135,29 @@ class IssueController extends Controller
             abort(404);
         }
 
-        return view('issues.show', compact('project', 'issue'));
+        // Only display recommendations for issues belonging to this project.
+        // The show action above already enforces project access for the viewer.
+        $recommendations = DuplicateCandidate::query()
+            ->where('issue_id', $issue->getKey())
+            ->whereHas('candidateIssue', fn ($query) => $query->where('project_id', $project->getKey()))
+            ->with('candidateIssue')
+            ->orderByDesc('similarity_score')
+            ->limit(10)
+            ->get();
+
+        $reviewHistory = collect();
+        if ($user->role === 'MAINTAINER' && (int) $project->owner_id === (int) $user->id) {
+            $reviewHistory = DB::table('activity_logs')
+                ->where('project_id', $project->id)->where('issue_id', $issue->id)
+                ->whereIn('action', ['DUPLICATE_REVIEW', 'DUPLICATE_CORRECTED'])
+                ->orderByDesc('id')->limit(20)->get();
+        }
+
+        $statusHistory = DB::table('activity_logs')
+            ->where('project_id', $project->id)->where('issue_id', $issue->id)
+            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
+            ->orderByDesc('id')->limit(20)->get();
+
+        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory'));
     }
 }

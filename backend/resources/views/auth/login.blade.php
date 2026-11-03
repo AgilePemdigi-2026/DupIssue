@@ -115,6 +115,13 @@
                             </div>
                         @enderror
                     </div>
+                    <div class="text-end mb-3">
+                        <a href="{{ route('password.request') }}"
+                            class="small text-decoration-none"
+                            style="color: #6f42c1;">
+                            Lupa Password?
+                        </a>
+                    </div>
 
                     <!-- Remember Me -->
                     <div class="form-check mb-4">
