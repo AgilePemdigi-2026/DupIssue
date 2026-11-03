@@ -87,7 +87,7 @@ class IssueController extends Controller
                         );
                     }
 
-                    if (config('queue.default') !== 'database') {
+                    if (config('queue.connections.database.driver') !== 'database') {
                         throw new LogicException(
                             'NLP detection requires the database queue driver.'
                         );
