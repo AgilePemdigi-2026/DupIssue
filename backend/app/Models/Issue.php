@@ -43,4 +43,10 @@ class Issue extends Model
     {
         return $this->hasMany(self::class, 'duplicate_of');
     }
+
+    // One issue can have many votes.
+    public function votes(): HasMany
+    {
+        return $this->hasMany(IssueVote::class);
+    }
 }
