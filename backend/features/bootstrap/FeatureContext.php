@@ -1,392 +1,268 @@
 <?php
 
-use Behat\Behat\Context\Context;
-use Behat\Hook\BeforeScenario;
-use Behat\Hook\AfterScenario;
-use Behat\Step\Given;
-use Behat\Step\When;
-use Behat\Step\Then;
-use Illuminate\Contracts\Console\Kernel as ConsoleKernel;
-use Illuminate\Contracts\Http\Kernel as HttpKernel;
-use Illuminate\Foundation\Application;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Facade;
-use Illuminate\Container\Container;
-use Symfony\Component\HttpFoundation\Response;
+declare(strict_types=1);
 
-class FeatureContext implements Context
+use App\Models\Issue;
+use App\Models\Membership;
+use App\Models\Project;
+use App\Models\User;
+use Behat\Behat\Hook\Scope\BeforeScenarioScope;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Soulcodex\Behat\Addon\Context;
+
+/**
+ * Sprint 1 BDD glue: real Blade forms through Mink + real Laravel queue worker,
+ * with only the NLP HTTP service replaced by a deterministic fake.
+ * NEVER run against the normal development database.
+ */
+final class FeatureContext extends Context
 {
-    private ?Application $app = null;
-    private ?HttpKernel $kernel = null;
-    private ?Response $response = null;
+    private ?Project $project = null;
+    private ?User $user = null;
+    private ?Issue $sameProjectCandidate = null;
+    private ?Issue $foreignProjectCandidate = null;
+    private int $baselineIssueId = 0;
 
-    private array $formData = [];
-    private array $cookies = [];
-    private ?string $csrfToken = null;
-
-    #[BeforeScenario]
-    public function beforeScenario(): void
+    /** @BeforeScenario */
+    public function beforeScenario(BeforeScenarioScope $scope): void
     {
-        // Set lingkungan khusus pengujian sebelum Laravel boot.
-        $environment = [
-            'APP_ENV' => 'testing',
-            'DB_CONNECTION' => 'sqlite',
-            'DB_DATABASE' => ':memory:',
-            'SESSION_DRIVER' => 'array',
-            'CACHE_STORE' => 'array',
-            'QUEUE_CONNECTION' => 'sync',
-            'MAIL_MAILER' => 'array',
-            'BCRYPT_ROUNDS' => '4',
-        ];
-
-        foreach ($environment as $key => $value) {
-            putenv("$key=$value");
-            $_ENV[$key] = $value;
-            $_SERVER[$key] = $value;
+        $app = $this->container();
+        $connection = config('database.default');
+        $database = config('database.connections.sqlite.database');
+        if (! $app->environment('behat') || $app->configurationIsCached()
+            || $connection !== 'sqlite' || $database !== ':memory:') {
+            throw new RuntimeException('BDD REFUSED: requires APP_ENV=behat, uncached config, and SQLite :memory:.');
         }
-
-        // Bootstrap Laravel tanpa PHPUnit TestCase.
-        $backendPath = dirname(__DIR__, 2);
-
-        $this->app = require $backendPath . '/bootstrap/app.php';
-
-        $this->kernel = $this->app->make(
-            HttpKernel::class
-        );
-
-        $this->kernel->bootstrap();
-
-        // Pemeriksaan keselamatan SEBELUM migration.
-        $database = $this->app->make('config');
-
-        if (
-            $database->get('database.default') !== 'sqlite'
-            || $database->get(
-                'database.connections.sqlite.database'
-            ) !== ':memory:'
-        ) {
-            throw new RuntimeException(
-                'BDD dibatalkan: database harus SQLite :memory:.'
-            );
+        DB::purge('sqlite');
+        $pdo = DB::connection('sqlite')->getPdo();
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite'
+            || DB::connection('sqlite')->selectOne('PRAGMA database_list')->file !== '') {
+            throw new RuntimeException('BDD REFUSED: database is not isolated SQLite memory.');
         }
+        // Isolate browser and Laravel authentication between BDD scenarios.
+        $this->session()->reset();
+        app('session.store')->flush();
+        app('auth')->forgetGuards();
 
-        // Migration hanya pada database in-memory.
-        $exitCode = $this->app
-            ->make(ConsoleKernel::class)
-            ->call('migrate:fresh', [
-                '--force' => true,
-            ]);
-
-        if ($exitCode !== 0) {
-            throw new RuntimeException(
-                'Migration BDD gagal.'
-            );
-        }
-
-        $this->formData = [];
-        $this->cookies = [];
-        $this->csrfToken = null;
-        $this->response = null;
+        // Safe: assertions above guarantee these migrations cannot destroy MySQL/dev data.
+        Artisan::call('migrate:fresh', ['--force' => true]);
+        config(['services.nlp.base_url' => 'http://nlp.test']);
+        Http::preventStrayRequests();
+        Http::fake([]);
+        $this->project = null;
+        $this->user = null;
+        $this->sameProjectCandidate = null;
+        $this->foreignProjectCandidate = null;
+        $this->baselineIssueId = 0;
     }
 
-    #[AfterScenario]
-    public function afterScenario(): void
+    /** @Given I am logged in as :email with role :role */
+    public function iAmLoggedInAs(string $email, string $role): void
     {
-        // Bersihkan referensi aplikasi dan Facade.
-        // Tidak memanggil PHPUnit tearDown().
-        $this->kernel = null;
-
-        if ($this->app !== null) {
-            $this->app->flush();
-            $this->app = null;
+        $password = 'BddTemporaryPassword123!';
+        $this->user = User::factory()->create([
+            'email' => $email,
+            'role' => strtoupper($role),
+            'password' => $password,
+        ]);
+        // Authenticate through the real web form, not Auth::login() in another session.
+        $this->visitUrl('/login');
+        $page = $this->session()->getPage();
+        $page->fillField('email', $email);
+        $page->fillField('password', $password);
+        $form = $page->find('css', 'form');
+        if ($form === null) {
+            throw new RuntimeException('Login form was not found.');
         }
-
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
-        Container::setInstance(null);
-
-        $this->response = null;
-        $this->formData = [];
-        $this->cookies = [];
-        $this->csrfToken = null;
+        $form->submit();
+        if (str_contains($this->session()->getCurrentUrl(), '/login')) {
+            throw new RuntimeException('BDD fixture login failed. Check login form/route.');
+        }
     }
 
-    /**
-     * Mengirim request melalui HTTP Kernel Laravel.
-     */
-    private function sendRequest(
-        string $method,
-        string $url,
-        array $data = []
-    ): Response {
-        if ($this->kernel === null) {
-            throw new RuntimeException(
-                'Laravel belum diinisialisasi.'
-            );
-        }
-
-        $request = Request::create(
-            $url,
-            $method,
-            $data,
-            $this->cookies
-        );
-
-        $response = $this->kernel->handle($request);
-
-        $this->kernel->terminate($request, $response);
-
-        // Simpan cookie untuk request berikutnya.
-        foreach ($response->headers->getCookies() as $cookie) {
-            $this->cookies[$cookie->getName()] =
-                $cookie->getValue();
-        }
-
-        $this->response = $response;
-
-        return $response;
-    }
-
-    #[Given('I am on :path')]
-    public function iAmOn(string $path): void
+    /** @Given I am an active member of project :name with id :id */
+    public function iAmAnActiveMember(string $name, string $id): void
     {
-        $this->formData = [];
-
-        $response = $this->sendRequest('GET', $path);
-
-        if ($response->getStatusCode() !== 200) {
-            throw new RuntimeException(
-                'Halaman gagal dibuka. HTTP '
-                . $response->getStatusCode()
-            );
+        if ($this->user === null) {
+            throw new RuntimeException('Reporter must be created before project membership.');
         }
-
-        // Ambil CSRF token asli dari form Laravel.
-        $html = (string) $response->getContent();
-
-        if (
-            preg_match(
-                '/name="_token"\s+value="([^"]+)"/',
-                $html,
-                $matches
-            ) === 1
-        ) {
-            $this->csrfToken = $matches[1];
+        $this->project = Project::factory()->create(['name' => $name]);
+        if ((string) $this->project->id !== $id) {
+            throw new RuntimeException('SRS fixture expects project #'.$id.'; got #'.$this->project->id);
         }
-    }
-
-    #[When('I fill in :field with :value')]
-    public function iFillIn(
-        string $field,
-        string $value
-    ): void {
-        $this->formData[$field] = $value;
-    }
-
-    #[When('I press :label')]
-    public function iPress(string $label): void
-    {
-        if ($label !== 'Daftar Akun') {
-            throw new RuntimeException(
-                "Tombol tidak dikenali: {$label}"
-            );
-        }
-
-        if ($this->csrfToken === null) {
-            throw new RuntimeException(
-                'CSRF token formulir tidak ditemukan.'
-            );
-        }
-
-        $payload = array_merge(
-            $this->formData,
-            ['_token' => $this->csrfToken]
-        );
-
-        $response = $this->sendRequest(
-            'POST',
-            '/register',
-            $payload
-        );
-
-        // Ikuti redirect setelah submit.
-        if (in_array(
-            $response->getStatusCode(),
-            [301, 302, 303],
-            true
-        )) {
-            $location = $response->headers->get('Location');
-
-            if ($location === null) {
-                throw new RuntimeException(
-                    'Redirect tidak memiliki lokasi tujuan.'
-                );
-            }
-
-            $this->sendRequest('GET', $location);
-        }
-    }
-
-    #[Then('I should see :text')]
-    public function iShouldSee(string $text): void
-    {
-        if ($this->response === null) {
-            throw new RuntimeException(
-                'Belum ada respons aplikasi.'
-            );
-        }
-
-        $html = (string) $this->response->getContent();
-
-        if (!str_contains($html, $text)) {
-            throw new RuntimeException(
-                "Teks tidak ditemukan: {$text}"
-            );
-        }
-    }
-
-    #[Then('the new account should have role :role')]
-    public function newAccountRole(string $role): void
-    {
-        $email = strtolower(
-            $this->formData['email'] ?? ''
-        );
-
-        $user = $this->app
-            ->make('db')
-            ->table('users')
-            ->where('email', $email)
-            ->first();
-
-        if ($user === null) {
-            throw new RuntimeException(
-                'Akun tidak ditemukan pada database BDD.'
-            );
-        }
-
-        if ($user->role !== $role) {
-            throw new RuntimeException(
-                "Role tidak sesuai: {$user->role}"
-            );
-        }
-    }
-    
-    // ===== REGISTER: SKENARIO TAMBAHAN =====
-
-    #[Given('I have an existing account with email :email')]
-    public function existingAccount(string $email): void
-    {
-        $this->app->make('db')->table('users')->insert([
-            'name' => 'Existing Reporter',
-            'email' => strtolower($email),
-            'password' => password_hash('Password123!', PASSWORD_BCRYPT),
-            'role' => 'REPORTER',
-            'created_at' => now(),
-            'updated_at' => now(),
+        Membership::factory()->create([
+            'project_id' => $this->project->id,
+            'user_id' => $this->user->id,
+            'is_active' => true,
         ]);
     }
 
-    #[Then('I should not see :text')]
-    public function iShouldNotSee(string $text): void
+    /** @Given I am not an active member of project :name */
+    public function iAmNotAnActiveMember(string $name): void
     {
-        if ($this->response === null) {
-            throw new RuntimeException('Respons belum tersedia.');
+        if ($this->project === null || $this->project->name !== $name || $this->user === null) {
+            throw new RuntimeException('Unknown fixture project.');
         }
+        DB::table('memberships')->where('project_id', $this->project->id)
+            ->where('user_id', $this->user->id)->update(['is_active' => false]);
+    }
 
-        if (str_contains((string) $this->response->getContent(), $text)) {
-            throw new RuntimeException("Teks tidak seharusnya muncul: {$text}");
+    /** @Given I have an existing issue :title in my project */
+    public function iHaveAnExistingIssue(string $title): void
+    {
+        $this->sameProjectCandidate = $this->createIssue($this->requiredProject(), $title);
+    }
+
+    /** @Given I have an existing issue :title in another project */
+    public function iHaveAnIssueInAnotherProject(string $title): void
+    {
+        $foreignProject = Project::factory()->create();
+        $this->foreignProjectCandidate = $this->createIssue($foreignProject, $title);
+    }
+
+    private function createIssue(Project $project, string $title): Issue
+    {
+        $issue = Issue::forceCreate([
+            'project_id' => $project->id,
+            'author_id' => $this->user?->id,
+            'title' => $title,
+            'description' => 'Kandidat issue untuk pengujian BDD pada Sprint 1.',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'detection_status' => 'COMPLETED',
+            'vote_count' => 0,
+        ]);
+        $this->baselineIssueId = max($this->baselineIssueId, (int) $issue->id);
+        return $issue;
+    }
+
+    /** @Given I have an NLP response with a same-project similarity of :same and a foreign-project similarity of :foreign */
+    public function iHaveAnNlpResponse(float $same, float $foreign): void
+    {
+        if (! $this->sameProjectCandidate || ! $this->foreignProjectCandidate) {
+            throw new RuntimeException('Create both comparison issues first.');
+        }
+        Http::fake(['http://nlp.test/candidates' => Http::response(['candidates' => [
+            ['issue_id' => $this->sameProjectCandidate->id, 'similarity' => $same],
+            ['issue_id' => $this->foreignProjectCandidate->id, 'similarity' => $foreign],
+        ]])]);
+    }
+
+    /** @Given I have an NLP service failure with HTTP status :status */
+    public function iHaveAnNlpServiceFailure(int $status): void
+    {
+        Http::fake(['http://nlp.test/candidates' => Http::response(['detail' => 'NLP unavailable'], $status)]);
+    }
+
+    /** @When I process one queued NLP job */
+    public function iProcessOneQueuedNlpJob(): void
+    {
+        $status = Artisan::call('queue:work', [
+            'connection' => 'database', '--queue' => 'nlp',
+            '--once' => true, '--force' => true, '--sleep' => 0,
+        ]);
+        if ($status !== 0) {
+            throw new RuntimeException('The database queue worker failed, exit: '.$status);
         }
     }
 
-    #[When('I submit a registration request with a password shorter than 8 characters')]
-    public function submitShortPassword(): void
+    /** @Then I should find one new issue with status :status and detection :detection */
+    public function iShouldFindOneNewIssue(string $status, string $detection): void
     {
-        $this->formData = [
-            'name' => 'Reporter BDD',
-            'email' => 'short.bdd@example.com',
-            'password' => '1234567',
-            'password_confirmation' => '1234567',
-        ];
-
-        $this->iPress('Daftar Akun');
-    }
-
-    #[Then('I should receive a password validation error')]
-    public function passwordValidationError(): void
-    {
-        $this->iShouldSee(
-            'The password field must be at least 8 characters.'
-        );
-    }
-
-    #[When('I submit a registration request without required fields')]
-    public function submitEmptyRegistration(): void
-    {
-        $this->formData = [];
-        $this->iPress('Daftar Akun');
-    }
-
-    #[Then('I should receive validation errors for "name", "email" and "password"')]
-    public function requiredFieldsErrors(): void
-    {
-        foreach ([
-            'The name field is required.',
-            'The email field is required.',
-            'The password field is required.',
-        ] as $message) {
-            $this->iShouldSee($message);
+        $issue = $this->newIssue();
+        if ($issue->status !== $status || $issue->detection_status !== $detection) {
+            throw new RuntimeException("Unexpected issue statuses: {$issue->status}/{$issue->detection_status}");
+        }
+        if ($issue->source_type !== 'FORM' || (int) $issue->vote_count !== 0
+            || (int) $issue->author_id !== (int) $this->user?->id
+            || (int) $issue->project_id !== (int) $this->requiredProject()->id) {
+            throw new RuntimeException('REQ-01.11 server-controlled fields are incorrect.');
         }
     }
 
-    #[Then('I should not have a new user account created')]
-    public function noNewUserCreated(): void
+    /** @Then I should find one NLP job in the :queue queue */
+    public function iShouldFindOneNlpJob(string $queue): void
     {
-        $count = $this->app->make('db')->table('users')->count();
+        $jobs = DB::table('jobs')->where('queue', $queue)->get();
+        if ($jobs->count() !== 1) {
+            throw new RuntimeException("Expected one {$queue} job; got {$jobs->count()}.");
+        }
+    }
 
+    /** @Then I should find the new issue with detection :status */
+    public function iShouldFindDetection(string $status): void
+    {
+        if ($this->newIssue()->detection_status !== $status) {
+            throw new RuntimeException('Detection status is not '.$status);
+        }
+    }
+
+    /** @Then I should find the new issue with status :status and no duplicate parent */
+    public function iShouldFindNoAutomaticDuplicate(string $status): void
+    {
+        $issue = $this->newIssue();
+        if ($issue->status !== $status || $issue->duplicate_of !== null) {
+            throw new RuntimeException('NLP must never auto-assign DUPLICATE or duplicate_of.');
+        }
+    }
+
+    /** @Then I should find a duplicate candidate from the same project with similarity :score */
+    public function iShouldFindSameProjectCandidate(float $score): void
+    {
+        $saved = DB::table('duplicate_candidates')->where('issue_id', $this->newIssue()->id)
+            ->where('candidate_issue_id', $this->sameProjectCandidate?->id)->first();
+        if ($saved === null || abs((float) $saved->similarity_score - $score) > 0.00001) {
+            throw new RuntimeException('Expected same-project candidate with similarity '.$score);
+        }
+    }
+
+    /** @Then I should find no duplicate candidates from another project */
+    public function iShouldFindNoForeignCandidates(): void
+    {
+        $count = DB::table('duplicate_candidates')->where('issue_id', $this->newIssue()->id)
+            ->where('candidate_issue_id', $this->foreignProjectCandidate?->id)->count();
         if ($count !== 0) {
-            throw new RuntimeException(
-                "Tidak boleh ada akun baru. Ditemukan: {$count}"
-            );
+            throw new RuntimeException('REQ-01 project isolation violated by NLP candidate.');
         }
     }
 
-    #[When('I submit valid registration data with role :role')]
-    public function submitRegistrationWithRole(string $role): void
+    /** @Then I should find no new issues in the database */
+    public function iShouldFindNoNewIssues(): void
     {
-        $this->formData = [
-            'name' => 'Reporter BDD',
-            'email' => 'role-injection.bdd@example.com',
-            'password' => 'Password123!',
-            'password_confirmation' => 'Password123!',
-            'role' => $role,
-        ];
-
-        $this->iPress('Daftar Akun');
+        if (Issue::query()->where('id', '>', $this->baselineIssueId)->exists()) {
+            throw new RuntimeException('Invalid or unauthorized submit created an issue.');
+        }
     }
 
-    #[Then('I should have a new account with role :role')]
-    public function accountHasRole(string $role): void
+    /** @Then I should see validation error for :field */
+    public function iShouldSeeValidationError(string $field): void
     {
-        $this->newAccountRole($role);
+        $element = $this->session()->getPage()->find('css', '#'.$field.'.is-invalid');
+        if ($element === null) {
+            throw new RuntimeException('Expected visible validation error for '.$field);
+        }
     }
 
-    #[Then('I should not have role :role')]
-    public function accountDoesNotHaveRole(string $role): void
+    /** @Then I should be denied project access */
+    public function iShouldBeDeniedProjectAccess(): void
     {
-        $email = strtolower($this->formData['email'] ?? '');
-
-        $user = $this->app->make('db')->table('users')
-            ->where('email', $email)
-            ->first();
-
-        if ($user === null) {
-            throw new RuntimeException('Akun tidak ditemukan.');
+        $status = $this->session()->getStatusCode();
+        if ($status !== 403) {
+            throw new RuntimeException('Expected HTTP 403; got '.$status);
         }
+    }
 
-        if ($user->role === $role) {
-            throw new RuntimeException(
-                "Akun tidak boleh memiliki role {$role}."
-            );
-        }
+    private function requiredProject(): Project
+    {
+        return $this->project ?? throw new RuntimeException('Project fixture has not been created.');
+    }
+
+    private function newIssue(): Issue
+    {
+        return Issue::query()->where('project_id', $this->requiredProject()->id)
+            ->where('id', '>', $this->baselineIssueId)
+            ->orderByDesc('id')->firstOrFail();
     }
 }

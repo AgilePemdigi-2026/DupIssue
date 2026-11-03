@@ -1,0 +1,9 @@
+default:
+  autoload:
+    '': '%paths.base%/features/register-bootstrap'
+  suites:
+    register:
+      paths:
+        - '%paths.base%/../docs/bdd/register.feature'
+      contexts:
+        - FeatureContext

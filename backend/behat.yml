@@ -1,10 +1,18 @@
 default:
-  autoload:
-    '': '%paths.base%/features/bootstrap'
-
+  extensions:
+    Soulcodex\Behat:
+      kernel:
+        bootstrap_path: '/bootstrap/app.php'
+        environment_path: '.env.behat'
+    Behat\MinkExtension:
+      base_url: http://localhost
+      default_session: laravel
+      laravel: ~
   suites:
-    default:
+    sprint1:
       paths:
-        - '%paths.base%/../docs/bdd/register.feature'
+        - '%paths.base%/features/sprint1'
       contexts:
+        - Soulcodex\Behat\Addon\RootContext: ~
         - FeatureContext
+        - ProjectBddContext
