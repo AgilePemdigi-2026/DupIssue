@@ -33,6 +33,14 @@ class PasswordResetOtpController extends Controller
             'email' => ['required', 'email', 'max:255'],
         ]);
 
+        // Prevent OTP codes from being written to Laravel's default log mailer.
+        // Return the same configuration error regardless of account existence.
+        if (! app()->runningUnitTests() && in_array(config('mail.default'), ['log', 'array'], true)) {
+            return redirect()->route('password.request')->withErrors([
+                'email' => 'Pengiriman OTP belum dikonfigurasi. Hubungi administrator.',
+            ]);
+        }
+
         $email = Str::lower(trim($data['email']));
         $request->session()->forget(['password_otp_email', 'password_otp_grant']);
         $request->session()->put('password_otp_email', $email);
@@ -203,7 +211,10 @@ class PasswordResetOtpController extends Controller
                 return null;
             }
 
-            $user->forceFill(['password' => Hash::make($data['password'])]);
+            $user->forceFill([
+                'password' => Hash::make($data['password']),
+                'auth_version' => ((int) $user->auth_version) + 1,
+            ]);
             $user->setRememberToken(Str::random(60));
             $user->save();
 

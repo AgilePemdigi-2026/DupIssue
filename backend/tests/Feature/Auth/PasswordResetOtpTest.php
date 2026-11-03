@@ -102,4 +102,91 @@ class PasswordResetOtpTest extends TestCase
             'password_confirmation' => 'NewPassword123!',
         ])->assertRedirect('/forgot-password');
     }
+
+    public function test_password_reset_increments_auth_version_and_denies_two_independent_old_sessions(): void
+    {
+        Notification::fake();
+        $user = User::factory()->create([
+            'role' => 'MAINTAINER',
+            'password' => 'OldPassword123!',
+        ]);
+        $oldVersion = (int) $user->fresh()->auth_version;
+
+        // Two independent, pre-existing browser session stores.
+        $browserA = new \Illuminate\Session\Store(
+            'browser-a', new \Illuminate\Session\ArraySessionHandler(120)
+        );
+        $browserB = new \Illuminate\Session\Store(
+            'browser-b', new \Illuminate\Session\ArraySessionHandler(120)
+        );
+        $browserA->start();
+        $browserB->start();
+        $browserA->put('auth_version', $oldVersion);
+        $browserB->put('auth_version', $oldVersion);
+
+        $this->post('/forgot-password', ['email' => $user->email]);
+        $otp = Notification::sent($user, PasswordResetOtpNotification::class)->first()->otp;
+        $this->post('/verify-otp', ['otp' => $otp])->assertRedirect('/reset-password');
+        $this->post('/reset-password', [
+            'password' => 'NewPassword123!',
+            'password_confirmation' => 'NewPassword123!',
+        ])->assertRedirect(route('login'));
+
+        $updated = $user->fresh();
+        $this->assertSame($oldVersion + 1, (int) $updated->auth_version);
+        $this->assertTrue(Hash::check('NewPassword123!', $updated->password));
+
+        $middleware = app(\App\Http\Middleware\EnforceAuthVersion::class);
+        foreach ([$browserA, $browserB] as $oldBrowser) {
+            $request = \Illuminate\Http\Request::create('/maintainer/dashboard', 'GET');
+            $request->setLaravelSession($oldBrowser);
+            $request->setUserResolver(fn () => $updated);
+
+            $response = $middleware->handle($request, fn () => response('SECURITY_BYPASS'));
+            $this->assertSame(302, $response->getStatusCode());
+            $this->assertSame(route('login'), $response->headers->get('Location'));
+            $this->assertNull($oldBrowser->get('auth_version'));
+        }
+
+        // New session created after reset has the current version.
+        $browserNew = new \Illuminate\Session\Store(
+            'browser-new', new \Illuminate\Session\ArraySessionHandler(120)
+        );
+        $browserNew->start();
+        $browserNew->put('auth_version', (int) $updated->auth_version);
+        $request = \Illuminate\Http\Request::create('/maintainer/dashboard', 'GET');
+        $request->setLaravelSession($browserNew);
+        $request->setUserResolver(fn () => $updated);
+        $response = $middleware->handle($request, fn () => response('ALLOWED'));
+        $this->assertSame(200, $response->getStatusCode());
+    }
+
+    public function test_missing_session_version_does_not_silently_authorize_a_persisted_login(): void
+    {
+        $user = User::factory()->create(['role' => 'MAINTAINER']);
+        $this->post('/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ])->assertRedirect();
+        $this->assertSame(1, (int) session('auth_version'));
+
+        // Real session identifier exists; missing version must fail closed.
+        $this->withSession(['auth_version' => null]);
+        $this->get('/maintainer/dashboard')->assertRedirect(route('login'));
+    }
+
+    public function test_resend_is_limited_and_existing_and_unknown_emails_see_generic_status(): void
+    {
+        Notification::fake();
+        $user = User::factory()->create();
+        $first = $this->post('/forgot-password', ['email' => $user->email]);
+        $message = session('status');
+        $this->assertNotEmpty($message);
+        $this->post('/forgot-password', ['email' => $user->email])
+            ->assertSessionHas('status', $message);
+        Notification::assertSentToTimes($user, PasswordResetOtpNotification::class, 1);
+
+        $this->post('/forgot-password', ['email' => 'unknown-otp@example.test'])
+            ->assertSessionHas('status', $message);
+    }
 }
