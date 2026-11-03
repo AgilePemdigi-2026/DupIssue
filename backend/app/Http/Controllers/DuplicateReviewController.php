@@ -20,6 +20,66 @@ class DuplicateReviewController extends Controller
             403, 'Hanya Maintainer pemilik project yang dapat memvalidasi issue');
     }
 
+    /**
+     * Menampilkan daftar kandidat duplikat terpusat untuk sebuah project (REQ-05.1, REQ-05.2).
+     */
+    public function index(Request $request, Project $project)
+    {
+        $this->authorizeOwner($request, $project);
+
+        $candidates = DuplicateCandidate::query()
+            ->whereHas('issue', function ($query) use ($project) {
+                $query->where('project_id', $project->id);
+            })
+            ->with(['issue.author', 'candidateIssue.author', 'decidedBy'])
+            ->orderByDesc('similarity_score')
+            ->get();
+
+        $failedIssues = Issue::query()
+            ->where('project_id', $project->id)
+            ->where('detection_status', 'FAILED')
+            ->with('author')
+            ->orderByDesc('id')
+            ->get();
+
+        return view('duplicates.index', compact('project', 'candidates', 'failedIssues'));
+    }
+
+    /**
+     * Menampilkan perbandingan dua issue berdampingan sebelum validasi (REQ-05.3, REQ-05.6).
+     */
+    public function compare(Request $request, Project $project, Issue $issue, DuplicateCandidate $candidate)
+    {
+        // Cek kepemilikan resource (404) sebelum otorisasi (403) agar cross-project
+        // request tidak bocorkan informasi eksistensi resource.
+        abort_unless((int) $issue->project_id === (int) $project->id
+            && (int) $candidate->issue_id === (int) $issue->id, 404);
+        $this->authorizeOwner($request, $project);
+
+        $candidate->load(['issue.author', 'candidateIssue.author', 'decidedBy']);
+        $source = $candidate->issue;
+        $suggested = $candidate->candidateIssue;
+
+        abort_unless((int) $source->project_id === (int) $project->id
+            && (int) $suggested->project_id === (int) $project->id, 404);
+
+        // Rekomendasi issue induk berdasarkan vote terbanyak
+        $suggestedParentId = ((int) $source->vote_count >= (int) $suggested->vote_count)
+            ? (int) $source->id
+            : (int) $suggested->id;
+
+        $pairHistory = DB::table('activity_logs')
+            ->where('project_id', $project->id)
+            ->whereIn('issue_id', [$source->id, $suggested->id])
+            ->whereIn('action', ['DUPLICATE_REVIEW', 'DUPLICATE_CORRECTED'])
+            ->orderByDesc('created_at')
+            ->get();
+
+        return view('duplicates.compare', compact(
+            'project', 'issue', 'candidate', 'source', 'suggested', 'suggestedParentId', 'pairHistory'
+        ));
+    }
+
     public function decide(
         Request $request,
         Project $project,
@@ -49,7 +109,7 @@ class DuplicateReviewController extends Controller
             $source = $issues->get((int) $issue->id);
             $suggested = $issues->get((int) $candidate->candidate_issue_id);
             abort_unless((int) $source->project_id === (int) $project->id
-                && (int) $suggested->project_id === (int) $project->id, 404);
+                && (int) $suggested->project_id === (int) $project->id, 404, 'Harus satu project');
 
             $lockedCandidate = DuplicateCandidate::query()->lockForUpdate()->findOrFail($candidate->id);
             abort_unless((int) $lockedCandidate->issue_id === (int) $source->id
@@ -74,13 +134,16 @@ class DuplicateReviewController extends Controller
                 $parent = $parentId === (int) $source->id ? $source : $suggested;
                 $child = $parentId === (int) $source->id ? $suggested : $source;
 
+                abort_if((int) $parent->id === (int) $child->id, 422, 'Induk harus berbeda');
+                abort_unless((int) $parent->project_id === (int) $child->project_id, 422, 'Harus satu project');
+
                 abort_unless($parent->duplicate_of === null && $parent->status !== 'DUPLICATE',
-                    409, 'Issue induk tidak boleh merupakan duplikat lain');
+                    409, 'Induk bukan duplikat');
                 abort_unless($child->duplicate_of === null
                     && in_array($child->status, ['OPEN', 'IN_PROGRESS'], true),
                     409, 'Issue duplikat harus OPEN/IN_PROGRESS dan belum mempunyai induk');
                 abort_unless(! Issue::query()->where('duplicate_of', $child->id)->exists(),
-                    409, 'Issue yang sudah menjadi induk duplikat lain tidak boleh dijadikan anak');
+                    409, 'Tidak membentuk siklus');
 
                 $child->duplicate_of = $parent->id;
                 $child->status = in_array($parent->status, ['RESOLVED', 'CLOSED'], true)
@@ -112,6 +175,10 @@ class DuplicateReviewController extends Controller
             'reason' => ['required', 'string', 'min:10', 'max:500'],
             'expected_duplicate_of' => ['required', 'integer', 'min:1'],
             'expected_status' => ['required', 'string'],
+        ], [
+            'reason.required' => 'Alasan Koreksi wajib diisi',
+            'reason.min' => 'Alasan Koreksi minimal 10 karakter',
+            'reason.max' => 'Alasan Koreksi maksimal 500 karakter',
         ]);
 
         DB::transaction(function () use ($request, $project, $issue, $input): void {
@@ -150,6 +217,45 @@ class DuplicateReviewController extends Controller
 
         return redirect()->route('issues.show', ['project' => $project, 'issue' => $issue])
             ->with('success', 'Penandaan duplikat dibatalkan dan alasannya dicatat');
+    }
+
+    /**
+     * Memproses ulang deteksi NLP saat status deteksi FAILED (REQ-05.12, REQ-05.13).
+     */
+    public function retry(Request $request, Project $project, Issue $issue): RedirectResponse
+    {
+        $this->authorizeOwner($request, $project);
+        abort_unless((int) $issue->project_id === (int) $project->id, 404);
+
+        $dispatched = false;
+        DB::transaction(function () use ($issue, &$dispatched): void {
+            $affected = Issue::query()
+                ->whereKey($issue->id)
+                ->where('detection_status', 'FAILED')
+                ->lockForUpdate()
+                ->update(['detection_status' => 'PENDING']);
+
+            if ($affected > 0) {
+                $dispatched = true;
+            }
+        }, 3);
+
+        if ($dispatched) {
+            \App\Jobs\DetectIssueCandidatesJob::dispatch($issue->id);
+
+            return redirect()->back()->with('success', 'Deteksi kemiripan issue sedang diproses ulang');
+        }
+
+        $currentStatus = $issue->fresh()->detection_status;
+        if (in_array($currentStatus, ['PENDING', 'PROCESSING'], true)) {
+            return redirect()->back()->with('status_notice', 'Pekerjaan sedang berjalan');
+        }
+
+        if ($currentStatus === 'COMPLETED') {
+            return redirect()->back()->with('status_notice', 'Deteksi kemiripan untuk issue ini sudah selesai');
+        }
+
+        abort(409, 'Hanya issue berstatus FAILED yang dapat diproses ulang');
     }
 
     private function state(DuplicateCandidate $pair, Issue $source, Issue $suggested): array
