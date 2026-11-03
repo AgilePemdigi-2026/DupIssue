@@ -53,45 +53,42 @@ class ProjectService
 
         $cleanName = trim($data['name']);
 
+        DB::beginTransaction();
         try {
-            return DB::transaction(function () use ($creator, $cleanName, $data) {
-                // Validasi keunikan nama project secara case-insensitive (panduan final)
-                $existingProject = Project::where('name', $cleanName)->exists();
-                if ($existingProject) {
-                    throw ValidationException::withMessages([
-                        'name' => 'Nama sudah digunakan',
-                    ]);
-                }
-
-                // 3. Simpan project dengan owner_id dari server dan waktu dateTime()
-                $project = new Project([
-                    'name' => $cleanName,
-                    'description' => $data['description'] ?? null,
-                ]);
-                $project->owner_id = $creator->id;
-                $project->created_at = now();
-                $project->updated_at = now();
-                $this->saveProject($project);
-
-                // 4. Titik pemanggilan log aktivitas (REQ-03.12)
-                $this->logActivity('CREATE_PROJECT', $project, $creator, [
-                    'new' => [
-                        'name' => $project->name,
-                        'description' => $project->description,
-                    ],
-                ]);
-
-                return $project;
-            }, 3);
-        } catch (ValidationException $e) {
-            if (! Project::where('name', $cleanName)->exists()) {
-                DB::table('projects')->insertOrIgnore([
-                    'owner_id' => $creator->id,
-                    'name' => $cleanName,
-                    'created_at' => now(),
-                    'updated_at' => now(),
+            // Validasi keunikan nama project secara case-insensitive (panduan final)
+            $existingProject = Project::where('name', $cleanName)->exists();
+            if ($existingProject) {
+                throw ValidationException::withMessages([
+                    'name' => 'Nama sudah digunakan',
                 ]);
             }
+
+            // 3. Simpan project dengan owner_id dari server dan waktu dateTime()
+            $project = new Project([
+                'name' => $cleanName,
+                'description' => $data['description'] ?? null,
+            ]);
+            $project->owner_id = $creator->id;
+            $project->created_at = now();
+            $project->updated_at = now();
+            $this->saveProject($project);
+
+            // 4. Titik pemanggilan log aktivitas (REQ-03.12)
+            $this->logActivity('CREATE_PROJECT', $project, $creator, [
+                'new' => [
+                    'name' => $project->name,
+                    'description' => $project->description,
+                ],
+            ]);
+
+            DB::commit();
+
+            return $project;
+        } catch (ValidationException $e) {
+            DB::commit();
+            throw $e;
+        } catch (\Throwable $e) {
+            DB::rollBack();
             throw $e;
         }
     }
@@ -133,55 +130,52 @@ class ProjectService
 
         $cleanName = trim($data['name']);
 
+        DB::beginTransaction();
         try {
-            return DB::transaction(function () use ($user, $project, $cleanName, $data) {
-                $project = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
+            $project = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
 
-                if ($user->id !== $project->owner_id || $user->role !== 'MAINTAINER') {
-                    throw new AuthorizationException('Akses tidak tersedia');
-                }
+            if ($user->id !== $project->owner_id || $user->role !== 'MAINTAINER') {
+                throw new AuthorizationException('Akses tidak tersedia');
+            }
 
-                // Pengecekan nama duplikat case-insensitive (mengabaikan project sendiri)
-                $existingProject = Project::where('name', $cleanName)
-                    ->where('id', '!=', $project->id)
-                    ->exists();
-                if ($existingProject) {
-                    throw ValidationException::withMessages([
-                        'name' => 'Nama sudah digunakan',
-                    ]);
-                }
-
-                $oldValues = [
-                    'name' => $project->name,
-                    'description' => $project->description,
-                ];
-
-                // 3. Update informasi dengan waktu dateTime()
-                $project->name = $cleanName;
-                $project->description = $data['description'] ?? null;
-                $project->updated_at = now();
-                $this->saveProject($project);
-
-                // 4. Titik pemanggilan log aktivitas (REQ-03.12)
-                $this->logActivity('UPDATE_PROJECT', $project, $user, [
-                    'old' => $oldValues,
-                    'new' => [
-                        'name' => $project->name,
-                        'description' => $project->description,
-                    ],
-                ]);
-
-                return $project;
-            }, 3);
-        } catch (ValidationException $e) {
-            if (! Project::where('name', $cleanName)->where('id', '!=', $project->id)->exists()) {
-                DB::table('projects')->insertOrIgnore([
-                    'owner_id' => $user->id,
-                    'name' => $cleanName,
-                    'created_at' => now(),
-                    'updated_at' => now(),
+            // Pengecekan nama duplikat case-insensitive (mengabaikan project sendiri)
+            $existingProject = Project::where('name', $cleanName)
+                ->where('id', '!=', $project->id)
+                ->exists();
+            if ($existingProject) {
+                throw ValidationException::withMessages([
+                    'name' => 'Nama sudah digunakan',
                 ]);
             }
+
+            $oldValues = [
+                'name' => $project->name,
+                'description' => $project->description,
+            ];
+
+            // 3. Update informasi dengan waktu dateTime()
+            $project->name = $cleanName;
+            $project->description = $data['description'] ?? null;
+            $project->updated_at = now();
+            $this->saveProject($project);
+
+            // 4. Titik pemanggilan log aktivitas (REQ-03.12)
+            $this->logActivity('UPDATE_PROJECT', $project, $user, [
+                'old' => $oldValues,
+                'new' => [
+                    'name' => $project->name,
+                    'description' => $project->description,
+                ],
+            ]);
+
+            DB::commit();
+
+            return $project;
+        } catch (ValidationException $e) {
+            DB::commit();
+            throw $e;
+        } catch (\Throwable $e) {
+            DB::rollBack();
             throw $e;
         }
     }

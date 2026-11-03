@@ -52,6 +52,12 @@ class ProjectActivityLogTest extends TestCase
         $newValues = json_decode($log->new_values, true);
         $this->assertSame('Project Alpha', $newValues['name']);
         $this->assertSame('Deskripsi Alpha', $newValues['description']);
+        $this->assertSame((int) $maintainer->id, (int) $project->owner_id);
+        $this->assertDatabaseHas('projects', [
+            'id' => $project->id,
+            'name' => 'Project Alpha',
+            'owner_id' => $maintainer->id,
+        ]);
     }
 
     public function test_update_project_writes_activity_log(): void
@@ -440,6 +446,86 @@ class ProjectActivityLogTest extends TestCase
         $this->assertSame($originalName, $project->fresh()->name);
         $this->assertSame($originalDesc, $project->fresh()->description);
         $this->assertDatabaseMissing('projects', ['name' => 'Atomic Update Rollback']);
+        $this->assertDatabaseCount('activity_logs', 0);
+    }
+
+    public function test_create_project_validation_failure_leaves_no_project_or_activity_log(): void
+    {
+        $maintainer = User::factory()->create(['role' => 'MAINTAINER']);
+        $service = app(ProjectService::class);
+
+        // Pre-existing project to test duplicate validation
+        $existing = Project::factory()->create(['name' => 'Existing Unique Project']);
+        $initialProjectsCount = Project::count();
+
+        // 1. Empty name
+        try {
+            $service->createProject($maintainer, ['name' => '']);
+            $this->fail('Expected ValidationException for empty name');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        // 2. Name too short (< 3 chars)
+        try {
+            $service->createProject($maintainer, ['name' => 'ab']);
+            $this->fail('Expected ValidationException for short name');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        // 3. Duplicate name (case-insensitive)
+        try {
+            $service->createProject($maintainer, ['name' => 'existing unique project']);
+            $this->fail('Expected ValidationException for duplicate name');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        // Verify no new projects and no activity logs were created
+        $this->assertSame($initialProjectsCount, Project::count());
+        $this->assertDatabaseMissing('projects', ['name' => 'ab']);
+        $this->assertDatabaseCount('activity_logs', 0);
+    }
+
+    public function test_update_project_validation_failure_leaves_project_and_activity_log_unchanged(): void
+    {
+        [$owner, , $project] = $this->fixture();
+        $otherProject = Project::factory()->create(['name' => 'Another Project']);
+        $service = app(ProjectService::class);
+
+        $originalName = $project->name;
+        $originalDesc = $project->description;
+
+        // 1. Empty name
+        try {
+            $service->updateProject($owner, $project, ['name' => '']);
+            $this->fail('Expected ValidationException for empty name');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        // 2. Name too short (< 3 chars)
+        try {
+            $service->updateProject($owner, $project, ['name' => 'xy']);
+            $this->fail('Expected ValidationException for short name');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        // 3. Duplicate name belonging to another project
+        try {
+            $service->updateProject($owner, $project, ['name' => 'another project']);
+            $this->fail('Expected ValidationException for duplicate name');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        // Verify project data was NOT modified and NO activity logs were created
+        $fresh = $project->fresh();
+        $this->assertSame($originalName, $fresh->name);
+        $this->assertSame($originalDesc, $fresh->description);
+        $this->assertDatabaseMissing('projects', ['name' => 'xy']);
         $this->assertDatabaseCount('activity_logs', 0);
     }
 }
