@@ -131,11 +131,13 @@ Route::middleware('auth')->group(function () {
     Route::post('/projects/{project}/submit', [IssueController::class, 'store'])
         ->middleware('role:REPORTER')
         ->name('issues.store');
+
     Route::post('/projects/{project}/issues/recommendations',
         IssueRecommendationController::class
     )
-        ->middleware('role:REPORTER')
+        ->middleware(['role:REPORTER', 'throttle:60,1'])
         ->name('issues.recommendations');
+
     Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
         ->name('issues.index');
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
