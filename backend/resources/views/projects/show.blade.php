@@ -20,7 +20,10 @@
                         </p>
                     </div>
                     <div class="d-flex gap-2">
-                        @if($project->owner_id === auth()->id())
+                        @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+                            <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-warning">
+                                <i class="bi bi-intersect me-1"></i> Review Kandidat Duplikat
+                            </a>
                             <a href="/projects/{{ $project->id }}/members" class="btn btn-outline-primary">
                                 <i class="bi bi-people me-1"></i> Anggota Project
                             </a>
@@ -73,9 +76,14 @@
                     Pantau issue yang dilaporkan atau kirim laporan issue baru.
                 </p>
                 @include('issues.submit-link', ['project' => $project])
-                <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-primary btn-sm w-100">
+                <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-primary btn-sm w-100 mb-2">
                     Lihat Issue
                 </a>
+                @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+                    <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-outline-warning btn-sm w-100">
+                        Review Kandidat Duplikat
+                    </a>
+                @endif
             </div>
         </div>
     </div>
