@@ -1,0 +1,18 @@
+default:
+  extensions:
+    Soulcodex\Behat:
+      kernel:
+        bootstrap_path: '/bootstrap/app.php'
+        environment_path: '.env.behat'
+    Behat\MinkExtension:
+      base_url: http://localhost
+      default_session: laravel
+      laravel: ~
+  suites:
+    sprint1:
+      paths:
+        - '%paths.base%/features/sprint1'
+      contexts:
+        - Soulcodex\Behat\Addon\RootContext: ~
+        - FeatureContext
+        - ProjectBddContext
