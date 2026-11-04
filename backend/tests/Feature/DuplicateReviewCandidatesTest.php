@@ -12,6 +12,8 @@ use Exception;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Mockery;
 use Tests\TestCase;
 
 class DuplicateReviewCandidatesTest extends TestCase
@@ -387,59 +389,287 @@ class DuplicateReviewCandidatesTest extends TestCase
         ]);
     }
 
-    public function test_retry_detection_only_allowed_for_failed_status(): void
+    public function test_retry_when_failed_dispatches_exactly_one_job_and_sets_status_to_pending(): void
     {
         Bus::fake([DetectIssueCandidatesJob::class]);
 
         [$owner, , $project, $source] = $this->fixture();
-        $source->update(['detection_status' => 'FAILED']);
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
 
         $retryUrl = route('issues.detection.retry', [
             'project' => $project,
             'issue' => $source,
         ]);
 
-        // 1. Valid retry when status is FAILED
-        $this->actingAs($owner)->post($retryUrl)->assertRedirect();
+        $response = $this->actingAs($owner)->post($retryUrl);
+        $response->assertRedirect();
+        $response->assertSessionHas('success', 'Deteksi kemiripan issue sedang diproses ulang');
+
         $this->assertSame('PENDING', $source->fresh()->detection_status);
-        Bus::assertDispatched(DetectIssueCandidatesJob::class, 1);
-
-        // 2. Reject retry when status is already PENDING
-        $this->post($retryUrl)->assertRedirect()->assertSessionHas('status_notice');
-        Bus::assertDispatched(DetectIssueCandidatesJob::class, 1); // no second job dispatched
-
-        // 3. Reject retry when status is COMPLETED
-        $source->update(['detection_status' => 'COMPLETED']);
-        $this->post($retryUrl)->assertRedirect()->assertSessionHas('status_notice');
-        Bus::assertDispatched(DetectIssueCandidatesJob::class, 1); // no extra job
+        Bus::assertDispatchedTimes(DetectIssueCandidatesJob::class, 1);
     }
 
-    public function test_retry_concurrency_guard_prevents_duplicate_job_dispatch(): void
+    public function test_retry_when_already_pending_dispatches_zero_additional_jobs(): void
     {
         Bus::fake([DetectIssueCandidatesJob::class]);
 
         [$owner, , $project, $source] = $this->fixture();
-        $source->update(['detection_status' => 'FAILED']);
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'PENDING']);
 
-        // Simulate concurrent execution: first request updates to PENDING, second sees not FAILED
-        $firstResult = DB::transaction(function () use ($source): bool {
-            return Issue::query()
-                ->whereKey($source->id)
-                ->where('detection_status', 'FAILED')
-                ->lockForUpdate()
-                ->update(['detection_status' => 'PENDING']) > 0;
-        });
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
 
-        $secondResult = DB::transaction(function () use ($source): bool {
-            return Issue::query()
-                ->whereKey($source->id)
-                ->where('detection_status', 'FAILED')
-                ->lockForUpdate()
-                ->update(['detection_status' => 'PENDING']) > 0;
-        });
+        $response = $this->actingAs($owner)->post($retryUrl);
+        $response->assertRedirect();
+        $response->assertSessionHas('status_notice', 'Pekerjaan sedang berjalan');
 
-        $this->assertTrue($firstResult);
-        $this->assertFalse($secondResult);
+        $this->assertSame('PENDING', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+    }
+
+    public function test_retry_when_completed_dispatches_zero_jobs_and_preserves_status(): void
+    {
+        Bus::fake([DetectIssueCandidatesJob::class]);
+
+        [$owner, , $project, $source] = $this->fixture();
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'COMPLETED']);
+
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
+
+        $response = $this->actingAs($owner)->post($retryUrl);
+        $response->assertRedirect();
+        $response->assertSessionHas('status_notice', 'Deteksi kemiripan untuk issue ini sudah selesai');
+
+        $this->assertSame('COMPLETED', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+    }
+
+    public function test_retry_when_processing_dispatches_zero_jobs_and_preserves_status(): void
+    {
+        Bus::fake([DetectIssueCandidatesJob::class]);
+
+        [$owner, , $project, $source] = $this->fixture();
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'PROCESSING']);
+
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
+
+        $response = $this->actingAs($owner)->post($retryUrl);
+        $response->assertRedirect();
+        $response->assertSessionHas('status_notice', 'Pekerjaan sedang berjalan');
+
+        $this->assertSame('PROCESSING', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+    }
+
+    public function test_retry_dispatch_failure_recovers_to_failed_without_hanging_and_logs_error(): void
+    {
+        Log::spy();
+
+        [$owner, , $project, $source] = $this->fixture();
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
+
+        $dispatcherMock = Mockery::mock(\Illuminate\Contracts\Bus\Dispatcher::class);
+        $dispatcherMock->shouldReceive('dispatch')
+            ->once()
+            ->andThrow(new \RuntimeException('Queue connection timeout'));
+        $this->app->instance(\Illuminate\Contracts\Bus\Dispatcher::class, $dispatcherMock);
+
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
+
+        $response = $this->actingAs($owner)->post($retryUrl);
+        $response->assertRedirect();
+        $response->assertSessionHas('error', 'Gagal memproses ulang deteksi NLP. Silakan coba beberapa saat lagi.');
+
+        // Status dipulihkan ke FAILED (tidak menggantung di PENDING)
+        $this->assertSame('FAILED', $source->fresh()->detection_status);
+
+        // Error dicatat dengan Log::error menyertakan issue_id, project_id, dan exception message
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->with('Gagal menjadwalkan ulang deteksi NLP.', Mockery::on(function ($context) use ($source, $project) {
+                return $context['issue_id'] === $source->id
+                    && $context['project_id'] === $project->id
+                    && str_contains($context['error'], 'Queue connection timeout');
+            }));
+    }
+
+    public function test_retry_competing_requests_and_stale_read_race_condition_simulation(): void
+    {
+        Bus::fake([DetectIssueCandidatesJob::class]);
+
+        [$owner, , $project, $source] = $this->fixture();
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
+
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
+
+        // (i) Dua request berurutan ke endpoint yang sama: request 1 berhasil klaim & dispatch, request 2 ditolak
+        $firstResponse = $this->actingAs($owner)->post($retryUrl);
+        $firstResponse->assertRedirect()->assertSessionHas('success');
+
+        $secondResponse = $this->post($retryUrl);
+        $secondResponse->assertRedirect()->assertSessionHas('status_notice');
+
+        // Total job yang dijadwalkan tepat 1
+        Bus::assertDispatchedTimes(DetectIssueCandidatesJob::class, 1);
+
+        // (ii) Skenario "stale read": status di DB sudah diubah ke PENDING oleh request lain tepat sebelum eksekusi klaim
+        $competingIssue = Issue::forceCreate([
+            'project_id' => $project->id,
+            'author_id' => $owner->id,
+            'title' => 'Issue Stale Race',
+            'description' => 'Deskripsi issue race.',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'detection_status' => 'FAILED',
+        ]);
+
+        // Simulasikan balapan di mana proses lain sudah mengubah status menjadi PENDING terlebih dahulu
+        DB::table('issues')->where('id', $competingIssue->id)->update(['detection_status' => 'PENDING']);
+
+        $competingUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $competingIssue,
+        ]);
+
+        $competingResponse = $this->post($competingUrl);
+        $competingResponse->assertRedirect()->assertSessionHas('status_notice');
+
+        // Job tetap 1 (tidak ada job kedua yang ter-dispatch)
+        Bus::assertDispatchedTimes(DetectIssueCandidatesJob::class, 1);
+    }
+
+    public function test_retry_rejected_for_guest_reporter_and_non_owner_maintainer_with_zero_jobs(): void
+    {
+        Bus::fake([DetectIssueCandidatesJob::class]);
+
+        [$owner, $reporter, $project, $source] = $this->fixture();
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
+        $otherMaintainer = User::factory()->create(['role' => 'MAINTAINER']);
+
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
+
+        // 1. Guest -> redirect ke login
+        $this->post($retryUrl)->assertRedirect('/login');
+        $this->assertSame('FAILED', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+
+        // 2. Reporter di project yang sama -> 403 Forbidden
+        $this->actingAs($reporter)->post($retryUrl)->assertForbidden();
+        $this->assertSame('FAILED', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+
+        // 3. Maintainer dari project lain -> 403 Forbidden
+        $this->actingAs($otherMaintainer)->post($retryUrl)->assertForbidden();
+        $this->assertSame('FAILED', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+    }
+
+    public function test_retry_rejected_for_cross_project_issue_with_zero_jobs(): void
+    {
+        Bus::fake([DetectIssueCandidatesJob::class]);
+
+        [$owner, , $project, $source] = $this->fixture();
+        $otherProject = Project::factory()->create(['owner_id' => $owner->id]);
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
+
+        // Issue milik $project tapi diakses via URL $otherProject -> 404 Not Found
+        $crossProjectUrl = route('issues.detection.retry', [
+            'project' => $otherProject,
+            'issue' => $source,
+        ]);
+
+        $this->actingAs($owner)->post($crossProjectUrl)->assertNotFound();
+        $this->assertSame('FAILED', $source->fresh()->detection_status);
+        Bus::assertNotDispatched(DetectIssueCandidatesJob::class);
+    }
+
+    public function test_retry_failure_recovery_does_not_overwrite_worker_processing_or_completed_status(): void
+    {
+        Log::spy();
+
+        [$owner, , $project, $source] = $this->fixture();
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
+
+        // Skenario A: Dispatch melempar exception, namun worker telah mendahului mengubah status ke PROCESSING
+        $dispatcherMock = Mockery::mock(\Illuminate\Contracts\Bus\Dispatcher::class);
+        $dispatcherMock->shouldReceive('dispatch')
+            ->once()
+            ->andReturnUsing(function () use ($source) {
+                DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'PROCESSING']);
+                throw new \RuntimeException('Simulated worker pickup race failure');
+            });
+        $this->app->instance(\Illuminate\Contracts\Bus\Dispatcher::class, $dispatcherMock);
+
+        $retryUrl = route('issues.detection.retry', [
+            'project' => $project,
+            'issue' => $source,
+        ]);
+
+        $response = $this->actingAs($owner)->post($retryUrl);
+        $response->assertRedirect();
+        $response->assertSessionHas('error');
+
+        // Status harus tetap PROCESSING, pemulihan bersyarat TIDAK menimpanya kembali ke FAILED
+        $this->assertSame('PROCESSING', $source->fresh()->detection_status);
+
+        // Skenario B: Dispatch melempar exception, namun worker telah mendahului mengubah status ke COMPLETED
+        $dispatcherMockCompleted = Mockery::mock(\Illuminate\Contracts\Bus\Dispatcher::class);
+        $dispatcherMockCompleted->shouldReceive('dispatch')
+            ->once()
+            ->andReturnUsing(function () use ($source) {
+                DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'COMPLETED']);
+                throw new \RuntimeException('Simulated worker completion race failure');
+            });
+        $this->app->instance(\Illuminate\Contracts\Bus\Dispatcher::class, $dispatcherMockCompleted);
+
+        // Reset status ke FAILED untuk pengujian skenario COMPLETED
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'FAILED']);
+        $this->actingAs($owner)->post($retryUrl);
+
+        // Status harus tetap COMPLETED, tidak tertimpa ke FAILED
+        $this->assertSame('COMPLETED', $source->fresh()->detection_status);
+    }
+
+    public function test_project_and_issues_navigation_shows_review_link_for_owner_only(): void
+    {
+        [$owner, $reporter, $project] = $this->fixture();
+
+        // 1. Maintainer pemilik melihat tombol Review Kandidat Duplikat di halaman Project dan Issues
+        $this->actingAs($owner)->get(route('projects.show', ['id' => $project->id]))
+            ->assertOk()
+            ->assertSee(route('projects.duplicates.index', ['project' => $project]))
+            ->assertSee('Review Kandidat Duplikat');
+
+        $this->actingAs($owner)->get(route('issues.index', ['project' => $project]))
+            ->assertOk()
+            ->assertSee(route('projects.duplicates.index', ['project' => $project]))
+            ->assertSee('Review Kandidat Duplikat');
+
+        // 2. Reporter tidak melihat tombol Review Kandidat Duplikat
+        $this->actingAs($reporter)->get(route('projects.show', ['id' => $project->id]))
+            ->assertOk()
+            ->assertDontSee('Review Kandidat Duplikat');
+
+        $this->actingAs($reporter)->get(route('issues.index', ['project' => $project]))
+            ->assertOk()
+            ->assertDontSee('Review Kandidat Duplikat');
     }
 }
 
