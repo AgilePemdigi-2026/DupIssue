@@ -11,6 +11,11 @@
                 <p class="text-muted mb-0">Project: {{ $project->name }}</p>
             </div>
             <div class="d-flex flex-wrap gap-2">
+                @if (auth()->user()?->role === 'MAINTAINER' && (int) $project->owner_id === (int) auth()->id())
+                    <a class="btn btn-warning btn-sm" href="{{ route('projects.duplicates.index', ['project' => $project]) }}">
+                        Review Kandidat Duplikat
+                    </a>
+                @endif
                 @if (auth()->user()->role === 'REPORTER')
                     <a class="btn btn-primary btn-sm" href="{{ route('issues.create', ['project' => $project]) }}">Submit Issue</a>
                 @endif

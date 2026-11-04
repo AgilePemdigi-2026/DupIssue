@@ -43,4 +43,9 @@ class Issue extends Model
     {
         return $this->hasMany(self::class, 'duplicate_of');
     }
+
+    public function duplicateCandidates(): HasMany
+    {
+        return $this->hasMany(DuplicateCandidate::class, 'issue_id');
+    }
 }

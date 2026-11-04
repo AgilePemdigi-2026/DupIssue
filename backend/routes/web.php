@@ -134,6 +134,14 @@ Route::middleware('auth')->group(function () {
         ->name('issues.index');
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show');
+    Route::get('/projects/{project}/duplicates',
+        [DuplicateReviewController::class, 'index'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.duplicates.index');
+    Route::get('/projects/{project}/issues/{issue}/candidates/{candidate}/compare',
+        [DuplicateReviewController::class, 'compare'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.compare');
     Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
         [DuplicateReviewController::class, 'decide'])
         ->middleware('role:MAINTAINER')
@@ -142,6 +150,10 @@ Route::middleware('auth')->group(function () {
         [DuplicateReviewController::class, 'cancel'])
         ->middleware('role:MAINTAINER')
         ->name('issues.duplicates.cancel');
+    Route::post('/projects/{project}/issues/{issue}/detection/retry',
+        [DuplicateReviewController::class, 'retry'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.detection.retry');
     Route::post('/projects/{project}/issues/{issue}/status/preview',
         [IssueStatusController::class, 'preview'])
         ->middleware('role:MAINTAINER')

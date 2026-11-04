@@ -16,3 +16,11 @@ default:
         - Soulcodex\Behat\Addon\RootContext: ~
         - FeatureContext
         - ProjectBddContext
+    # INTEGRATION PENDING – untuk Joshua: suite sprint2 untuk acceptance test REQ-05 Duplicate Review
+    sprint2:
+      paths:
+        - '%paths.base%/../docs/bdd/sprint2'
+      contexts:
+        - Soulcodex\Behat\Addon\RootContext: ~
+        - FeatureContext
+        - DuplicateReviewBddContext
