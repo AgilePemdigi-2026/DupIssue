@@ -39,12 +39,16 @@
 
 ## Status BDD
 
-**Status: BDD: NOT EXECUTED**
+**Status: BDD: EXECUTED (PASS 20 / FAIL 0 / SKIP 0)**
 
-Alasan faktual:
-1. PR #40 yang mengintegrasikan Behat Sprint 1 telah di-merge ke `main`, namun dependensi vendor Behat belum terpasang di environment lokal (memerlukan unduhan paket baru via `composer install`).
-2. File konfigurasi `behat.yml` di `main` saat ini hanya mendefinisikan suite `sprint1` (`features/sprint1`), belum memiliki konfigurasi suite Sprint 2 maupun step definitions untuk REQ-05.
-3. Skenario Gherkin lengkap sesuai SRS Tabel 4.28 telah didokumentasikan di `docs/bdd/sprint2/req-05-validasi-duplikat.feature` dan siap dieksekusi begitu runner Sprint 2 tersedia.
+Hasil eksekusi aktual:
+1. Suite `sprint2` dikonfigurasi di `backend/behat.yml` dengan context `DuplicateReviewBddContext.php` (`backend/features/bootstrap/DuplicateReviewBddContext.php`).
+2. Seluruh 20 skenario Gherkin dari SRS Tabel 4.28 di `docs/bdd/sprint2/req-05-validasi-duplikat.feature` dijalankan secara nyata melalui Mink Extension & driver Laravel dengan SQLite memory terisolasi.
+3. Hasil eksekusi:
+   - **20 scenarios (20 passed)**
+   - **191 steps (191 passed)**
+   - **Waktu**: 0m17.86s
+4. Bukti log lengkap terekam di `docs/testing/sprint2/reza-req05-behat-output.txt`.
 
 ---
 

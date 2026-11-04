@@ -1,0 +1,152 @@
+Feature: Review & Validasi Duplikat Issue (REQ-05)
+  Sebagai Maintainer pemilik project
+  Saya ingin meninjau dan memvalidasi kandidat duplikat issue yang terdeteksi NLP
+  Agar daftar issue tetap bersih dan tidak redundan
+
+  Background:                                                                                     # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:22
+    Given terdapat project "Proyek Alpha" milik Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::terdapatProjectMilikMaintainer()
+    And terdapat Reporter "budi@kel4.dev" yang aktif di project tersebut                          # DuplicateReviewBddContext::terdapatReporterYangAktif()
+    And terdapat Issue #1 "Bug Login" dengan detection_status "COMPLETED" dan vote_count 5        # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatusDanVotes()
+    And terdapat Issue #2 "Gagal Masuk Akun" dengan detection_status "COMPLETED" dan vote_count 2 # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatusDanVotes()
+    And terdapat DuplicateCandidate dengan similarity_score 0.885 antara Issue #1 dan Issue #2    # DuplicateReviewBddContext::terdapatDuplicateCandidate()
+
+  ┌─ @BeforeScenario # FeatureContext::beforeScenario()
+  │
+  │  
+  │  
+  │  
+  │
+  Scenario: Maintainer melihat daftar kandidat duplikat project    # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:30
+    Given saya login sebagai Maintainer "reza@kel4.dev"            # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
+    Then saya melihat heading "Daftar Kandidat Duplikat"           # DuplicateReviewBddContext::sayaMelihatHeading()
+    And saya melihat pasangan "Bug Login" dan "Gagal Masuk Akun"   # DuplicateReviewBddContext::sayaMelihatPasangan()
+    And saya melihat skor kemiripan "88,50%"                       # DuplicateReviewBddContext::sayaMelihatSkorKemiripan()
+
+  Scenario: Maintainer melihat issue yang gagal dideteksi NLP                  # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:38
+    Given terdapat Issue #3 "Issue Gagal NLP" dengan detection_status "FAILED" # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatus()
+    And saya login sebagai Maintainer "reza@kel4.dev"                          # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya mengunjungi halaman "/projects/{project}/duplicates"             # DuplicateReviewBddContext::sayaMengunjungiHalaman()
+    Then saya melihat "Issue Gagal NLP" di bagian "Issue Deteksi Gagal"        # DuplicateReviewBddContext::sayaMelihatDiBagian()
+    And saya melihat tombol "Proses Ulang"                                     # DuplicateReviewBddContext::sayaMelihatTombol()
+
+  Scenario: Maintainer membuka halaman perbandingan dua issue                          # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:46
+    Given saya login sebagai Maintainer "reza@kel4.dev"                                # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya mengunjungi halaman compare untuk pasangan Issue #1 dan Issue #2         # DuplicateReviewBddContext::sayaMengunjungiHalamanCompare()
+    Then saya melihat heading "Bandingkan Pasangan Issue"                              # DuplicateReviewBddContext::sayaMelihatHeading()
+    And saya melihat detail Issue #1 dengan "Vote: 5"                                  # DuplicateReviewBddContext::sayaMelihatDetailIssueDengan()
+    And saya melihat detail Issue #2 dengan "Vote: 2"                                  # DuplicateReviewBddContext::sayaMelihatDetailIssueDengan()
+    And saya melihat rekomendasi "Disarankan — Vote Terbanyak (5 vs 2)" untuk Issue #1 # DuplicateReviewBddContext::sayaMelihatRekomendasiUntukIssue()
+
+  Scenario: Skor NLP hanya ditampilkan sebagai rekomendasi bukan keputusan otomatis  # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:55
+    Given saya login sebagai Maintainer "reza@kel4.dev"                              # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya mengunjungi halaman compare untuk pasangan Issue #1 dan Issue #2       # DuplicateReviewBddContext::sayaMengunjungiHalamanCompare()
+    Then saya melihat skor kemiripan "88.50" di halaman                              # DuplicateReviewBddContext::sayaMelihatSkorKemiripanDiHalaman()
+    And status kandidat masih "PENDING" (belum otomatis DUPLICATE)                   # DuplicateReviewBddContext::statusKandidatMasihBelumOtomatis()
+    And saya harus memilih "Konfirmasi Duplikat" atau "Bukan Duplikat" secara manual # DuplicateReviewBddContext::sayaHarusMemilihSecaraManual()
+
+  Scenario: Maintainer melihat aturan relasi duplikat di halaman perbandingan  # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:63
+    Given saya login sebagai Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya mengunjungi halaman compare untuk pasangan Issue #1 dan Issue #2 # DuplicateReviewBddContext::sayaMengunjungiHalamanCompare()
+    Then saya melihat kotak "Aturan Relasi Duplikat"                           # DuplicateReviewBddContext::sayaMelihatKotak()
+    And saya melihat kotak "Ringkasan Konsekuensi Status"                      # DuplicateReviewBddContext::sayaMelihatKotak()
+
+  Scenario: Sistem merekomendasikan issue dengan vote terbanyak sebagai induk # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:70
+    Given saya login sebagai Maintainer "reza@kel4.dev"                       # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya mengunjungi halaman compare                                     # DuplicateReviewBddContext::sayaMengunjungiHalamanCompareDefault()
+    Then Issue #1 (vote 5) ditandai "Disarankan — Vote Terbanyak"             # DuplicateReviewBddContext::issueVoteDitandai()
+
+  Scenario: Maintainer mengonfirmasi Issue #2 sebagai duplikat dari Issue #1 # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:76
+    Given saya login sebagai Maintainer "reza@kel4.dev"                      # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    And Issue #1 berstatus "OPEN"                                            # DuplicateReviewBddContext::issueBerstatus()
+    And Issue #2 berstatus "OPEN"                                            # DuplicateReviewBddContext::issueBerstatus()
+    When saya submit keputusan "DUPLICATE" dengan induk Issue #1             # DuplicateReviewBddContext::sayaSubmitKeputusan()
+    Then Issue #2 berstatus "DUPLICATE"                                      # DuplicateReviewBddContext::issueBerstatus()
+    And Issue #2 memiliki duplicate_of = Issue #1                            # DuplicateReviewBddContext::issueMemilikiDuplicateOf()
+    And kandidat memiliki decision "DUPLICATE"                               # DuplicateReviewBddContext::kandidatMemilikiDecision()
+
+  Scenario: Anak langsung CLOSED jika induk sudah RESOLVED       # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:86
+    Given saya login sebagai Maintainer "reza@kel4.dev"          # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    And Issue #1 berstatus "RESOLVED"                            # DuplicateReviewBddContext::issueBerstatus()
+    When saya submit keputusan "DUPLICATE" dengan induk Issue #1 # DuplicateReviewBddContext::sayaSubmitKeputusan()
+    Then Issue #2 berstatus "CLOSED"                             # DuplicateReviewBddContext::issueBerstatus()
+    And Issue #2 memiliki duplicate_of = Issue #1                # DuplicateReviewBddContext::issueMemilikiDuplicateOf()
+
+  Scenario: Maintainer memutuskan bukan duplikat        # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:94
+    Given saya login sebagai Maintainer "reza@kel4.dev" # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit keputusan "NOT_DUPLICATE"          # DuplicateReviewBddContext::sayaSubmitKeputusanNotDuplicate()
+    Then Issue #1 tetap "OPEN"                          # DuplicateReviewBddContext::issueTetapStatus()
+    And Issue #2 tetap "OPEN"                           # DuplicateReviewBddContext::issueTetapStatus()
+    And kandidat memiliki decision "NOT_DUPLICATE"      # DuplicateReviewBddContext::kandidatMemilikiDecision()
+
+  Scenario: Pembatalan penandaan duplikat ditolak tanpa alasan     # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:102
+    Given Issue #2 sudah berstatus "DUPLICATE" dari Issue #1       # DuplicateReviewBddContext::issueSudahBerstatusDari()
+    And saya login sebagai Maintainer "reza@kel4.dev"              # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit pembatalan dengan reason kosong               # DuplicateReviewBddContext::sayaSubmitPembatalanDenganReasonKosong()
+    Then saya mendapat error validasi "Alasan Koreksi wajib diisi" # DuplicateReviewBddContext::sayaMendapatErrorValidasi()
+    And Issue #2 masih berstatus "DUPLICATE"                       # DuplicateReviewBddContext::issueMasihBerstatus()
+
+  Scenario: Pembatalan penandaan duplikat berhasil dengan alasan valid                                                   # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:109
+    Given Issue #2 sudah berstatus "DUPLICATE" dari Issue #1                                                             # DuplicateReviewBddContext::issueSudahBerstatusDari()
+    And saya login sebagai Maintainer "reza@kel4.dev"                                                                    # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit pembatalan dengan reason "Setelah analisis lebih lanjut kedua issue memiliki akar masalah berbeda." # DuplicateReviewBddContext::sayaSubmitPembatalanDenganReason()
+    Then Issue #2 kembali berstatus "OPEN"                                                                               # DuplicateReviewBddContext::issueKembaliBerstatus()
+    And Issue #2 tidak memiliki duplicate_of                                                                             # DuplicateReviewBddContext::issueTidakMemilikiDuplicateOf()
+    And kandidat kembali ke decision "PENDING"                                                                           # DuplicateReviewBddContext::kandidatKembaliKeDecision()
+    And terdapat activity_log dengan action "DUPLICATE_CORRECTED"                                                        # DuplicateReviewBddContext::terdapatActivityLogDenganAction()
+
+  Scenario: Keputusan ditolak jika parent_issue_id bukan bagian dari pasangan # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:119
+    Given saya login sebagai Maintainer "reza@kel4.dev"                       # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit keputusan "DUPLICATE" dengan parent_issue_id = 99999     # DuplicateReviewBddContext::sayaSubmitKeputusanInvalidParent()
+    Then respon status 422 (Unprocessable Entity)                             # DuplicateReviewBddContext::responStatusUnprocessableEntity()
+
+  Scenario: Keputusan ditolak jika calon induk sendiri adalah duplikat # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:125
+    Given Issue #1 sudah berstatus "DUPLICATE" (memiliki duplicate_of) # DuplicateReviewBddContext::issueSudahBerstatusMemilikiDuplicateOf()
+    And saya login sebagai Maintainer "reza@kel4.dev"                  # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit keputusan "DUPLICATE" dengan induk Issue #1       # DuplicateReviewBddContext::sayaSubmitKeputusan()
+    Then respon status 409 dengan pesan "Induk bukan duplikat"         # DuplicateReviewBddContext::responStatusDenganPesan()
+
+  Scenario: Keputusan ditolak jika akan membentuk siklus duplikat                           # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:132
+    Given Issue #2 sudah memiliki anak duplikat Issue #3                                    # DuplicateReviewBddContext::issueSudahMemilikiAnakDuplikat()
+    And saya login sebagai Maintainer "reza@kel4.dev"                                       # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit keputusan "DUPLICATE" dengan induk Issue #1 (menjadikan Issue #2 anak) # DuplicateReviewBddContext::sayaSubmitKeputusanCycle()
+    Then respon status 409 dengan pesan "Tidak membentuk siklus"                            # DuplicateReviewBddContext::responStatusDenganPesan()
+
+  Scenario: Maintainer memproses ulang issue gagal deteksi NLP             # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:139
+    Given terdapat Issue #3 "Issue Gagal" dengan detection_status "FAILED" # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatus()
+    And saya login sebagai Maintainer "reza@kel4.dev"                      # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya POST ke "/projects/{project}/issues/{issue}/detection/retry" # DuplicateReviewBddContext::sayaPostKe()
+    Then Issue #3 berstatus "PENDING" (detection_status)                   # DuplicateReviewBddContext::issueBerstatusDetectionStatus()
+    And job DetectIssueCandidatesJob di-dispatch                           # DuplicateReviewBddContext::jobDetectIssueCandidatesJobDiDispatch()
+
+  Scenario: Retry kedua ditolak jika status bukan FAILED (concurrency guard) # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:147
+    Given Issue #3 sudah di-retry dan sekarang berstatus "PENDING"           # DuplicateReviewBddContext::issueSudahDiRetry()
+    And saya login sebagai Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya POST retry lagi                                                # DuplicateReviewBddContext::sayaPostRetryLagi()
+    Then respon redirect dengan flash "status_notice"                        # DuplicateReviewBddContext::responRedirectDenganFlash()
+    And tidak ada job baru yang di-dispatch                                  # DuplicateReviewBddContext::tidakAdaJobBaruDiDispatch()
+
+  Scenario: Setiap keputusan review tercatat di activity_logs                   # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:155
+    Given saya login sebagai Maintainer "reza@kel4.dev"                         # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
+    When saya submit keputusan "NOT_DUPLICATE"                                  # DuplicateReviewBddContext::sayaSubmitKeputusanNotDuplicate()
+    Then terdapat satu record di activity_logs dengan action "DUPLICATE_REVIEW" # DuplicateReviewBddContext::terdapatSatuRecordDiActivityLogs()
+    And record tersebut memiliki user_id Maintainer dan project_id project      # DuplicateReviewBddContext::recordMemilikiUserIdDanProjectId()
+
+  Scenario: Reporter tidak dapat mengakses halaman duplikat        # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:162
+    Given saya login sebagai Reporter "budi@kel4.dev"              # DuplicateReviewBddContext::sayaLoginSebagaiReporter()
+    When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
+    Then respon status 403 (Forbidden)                             # DuplicateReviewBddContext::responStatusForbidden()
+
+  Scenario: Maintainer project lain tidak dapat mengakses duplikat # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:167
+    Given saya login sebagai Maintainer dari project lain          # DuplicateReviewBddContext::sayaLoginSebagaiMaintainerLain()
+    When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
+    Then respon status 403 (Forbidden)                             # DuplicateReviewBddContext::responStatusForbidden()
+
+  Scenario: Guest diarahkan ke halaman login                       # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:172
+    Given saya tidak login                                         # DuplicateReviewBddContext::sayaTidakLogin()
+    When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
+    Then saya diarahkan ke "/login"                                # DuplicateReviewBddContext::sayaDiarahkanKe()
+
+20 scenarios (20 passed)
+191 steps (191 passed)
+0m17.86s (61.96Mb)

@@ -3,16 +3,11 @@
 # Sprint : 2
 # SRS Ref: Tabel 4.28 – REQ-05.1 s/d REQ-05.14
 #
-# ⚠️  BDD: NOT EXECUTED
-# Alasan faktual:
-# 1. PR #40 yang mengintegrasikan Behat Sprint 1 sudah di-merge ke main, namun
-#    dependensi Behat di vendor lokal belum di-install (memerlukan composer install).
-# 2. Konfigurasi behat.yml di main saat ini baru mencakup suite 'sprint1'
-#    (features/sprint1). Suite sprint2 dan context definitions untuk REQ-05 belum
-#    terkonfigurasi di behat.yml.
-# 3. File skenario Gherkin ini telah lengkap mencakup seluruh skenario normal,
-#    alternatif, dan exception sesuai SRS Tabel 4.28 dan siap dijalankan begitu
-#    suite runner Sprint 2 dikonfigurasi.
+# ✅  BDD: EXECUTED (20 passed, 0 failed, 191 steps passed)
+# Status:
+# 1. Dependensi Behat terpasang melalui Composer.
+# 2. Suite sprint2 dan DuplicateReviewBddContext terkonfigurasi dan tereksekusi.
+# 3. Seluruh 20 skenario (191 langkah) lulus (PASS) pada isolated SQLite memory runner.
 
 Feature: Review & Validasi Duplikat Issue (REQ-05)
   Sebagai Maintainer pemilik project
