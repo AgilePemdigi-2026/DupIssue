@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\DetectIssueCandidatesJob;
 use App\Models\DuplicateCandidate;
 use App\Models\Issue;
 use App\Models\Project;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class DuplicateReviewController extends Controller
@@ -221,41 +223,62 @@ class DuplicateReviewController extends Controller
 
     /**
      * Memproses ulang deteksi NLP saat status deteksi FAILED (REQ-05.12, REQ-05.13).
+     *
+     * Kegagalan dispatch ditangani secara aman dengan klaim atomik bersyarat
+     * dan pemulihan status bersyarat (Pendekatan B) agar tidak menggantung di PENDING
+     * dan tidak menimpa status PROCESSING/COMPLETED yang ditulis worker lain.
      */
     public function retry(Request $request, Project $project, Issue $issue): RedirectResponse
     {
         $this->authorizeOwner($request, $project);
         abort_unless((int) $issue->project_id === (int) $project->id, 404);
 
-        $dispatched = false;
-        DB::transaction(function () use ($issue, &$dispatched): void {
-            $affected = Issue::query()
-                ->whereKey($issue->id)
-                ->where('detection_status', 'FAILED')
-                ->lockForUpdate()
-                ->update(['detection_status' => 'PENDING']);
+        // 1. Klaim atomik bersyarat: update status hanya jika saat ini FAILED
+        $affected = Issue::query()
+            ->where('id', $issue->id)
+            ->where('project_id', $project->id)
+            ->where('detection_status', 'FAILED')
+            ->update(['detection_status' => 'PENDING']);
 
-            if ($affected > 0) {
-                $dispatched = true;
+        if ($affected === 0) {
+            $currentStatus = Issue::query()
+                ->where('id', $issue->id)
+                ->where('project_id', $project->id)
+                ->value('detection_status');
+
+            if (in_array($currentStatus, ['PENDING', 'PROCESSING'], true)) {
+                return redirect()->back()->with('status_notice', 'Pekerjaan sedang berjalan');
             }
-        }, 3);
 
-        if ($dispatched) {
-            \App\Jobs\DetectIssueCandidatesJob::dispatch($issue->id);
+            if ($currentStatus === 'COMPLETED') {
+                return redirect()->back()->with('status_notice', 'Deteksi kemiripan untuk issue ini sudah selesai');
+            }
 
-            return redirect()->back()->with('success', 'Deteksi kemiripan issue sedang diproses ulang');
-        }
-
-        $currentStatus = $issue->fresh()->detection_status;
-        if (in_array($currentStatus, ['PENDING', 'PROCESSING'], true)) {
             return redirect()->back()->with('status_notice', 'Pekerjaan sedang berjalan');
         }
 
-        if ($currentStatus === 'COMPLETED') {
-            return redirect()->back()->with('status_notice', 'Deteksi kemiripan untuk issue ini sudah selesai');
-        }
+        // 2. Dispatch aman dengan try/catch (Pendekatan B: pemulihan bersyarat)
+        try {
+            DetectIssueCandidatesJob::dispatch($issue->id);
 
-        abort(409, 'Hanya issue berstatus FAILED yang dapat diproses ulang');
+            return redirect()->back()->with('success', 'Deteksi kemiripan issue sedang diproses ulang');
+        } catch (\Throwable $e) {
+            // Pemulihan bersyarat: hanya kembalikan ke FAILED jika status masih PENDING.
+            // Wajib bersyarat agar tidak menimpa status PROCESSING/COMPLETED yang sudah ditulis worker lain.
+            Issue::query()
+                ->where('id', $issue->id)
+                ->where('project_id', $project->id)
+                ->where('detection_status', 'PENDING')
+                ->update(['detection_status' => 'FAILED']);
+
+            Log::error('Gagal menjadwalkan ulang deteksi NLP.', [
+                'issue_id' => $issue->id,
+                'project_id' => $project->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return redirect()->back()->with('error', 'Gagal memproses ulang deteksi NLP. Silakan coba beberapa saat lagi.');
+        }
     }
 
     private function state(DuplicateCandidate $pair, Issue $source, Issue $suggested): array

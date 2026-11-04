@@ -29,6 +29,13 @@
         </div>
     @endif
 
+    @if (session('error'))
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            {{ session('error') }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    @endif
+
     @if ($failedIssues->isNotEmpty())
         <div class="card border-warning mb-4 shadow-sm">
             <div class="card-header bg-warning-subtle text-warning-emphasis d-flex justify-content-between align-items-center">
