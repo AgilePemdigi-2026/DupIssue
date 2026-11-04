@@ -26,24 +26,15 @@ class IssueController extends Controller
     private function authorizeReporter(Request $request, Project $project): void
     {
         $user = $request->user();
-
-        if (
-            ! $user ||
-            $user->role !== 'REPORTER' ||
-            ! $this->projects->canAccessProject($user, $project)
-        ) {
+        if (! $user || $user->role !== 'REPORTER' || ! $this->projects->canAccessProject($user, $project)) {
             abort(403, 'Akses tidak tersedia');
         }
 
-        // Submit tetap memerlukan membership aktif.
-        abort_unless(
-            $project->memberships()
-                ->where('user_id', $user->getKey())
-                ->where('is_active', true)
-                ->exists(),
-            403,
-            'Akses tidak tersedia'
-        );
+        // canAccessProject juga mengizinkan owner; submit tetap memerlukan membership aktif.
+        abort_unless($project->memberships()
+            ->where('user_id', $user->getKey())
+            ->where('is_active', true)
+            ->exists(), 403, 'Akses tidak tersedia');
     }
 
     public function create(Request $request, Project $project): View
@@ -64,8 +55,7 @@ class IssueController extends Controller
 
         $issue = DB::transaction(function () use ($request, $project, $validated): Issue {
             $issue = new Issue($validated);
-
-            // Field keamanan dan status ditentukan oleh server.
+            // Field terkait keamanan dan status selalu ditentukan oleh server.
             $issue->project()->associate($project);
             $issue->author()->associate($request->user());
             $issue->source_type = 'FORM';
@@ -75,48 +65,35 @@ class IssueController extends Controller
             $issue->duplicate_of = null;
             $issue->save();
 
-            // Jalankan job setelah transaksi berhasil.
+            // Callback dijalankan setelah COMMIT; kegagalan antrean tidak menghapus issue.
             DB::afterCommit(function () use ($issue): void {
                 try {
-                    if (! is_subclass_of(
-                        DetectIssueCandidatesJob::class,
-                        ShouldQueue::class
-                    )) {
-                        throw new LogicException(
-                            'DetectIssueCandidatesJob must be integrated and implement ShouldQueue.'
-                        );
+                    // Job asli Valentino wajib queued; jangan pernah menjalankan NLP inline.
+                    if (! is_subclass_of(DetectIssueCandidatesJob::class, ShouldQueue::class)) {
+                        throw new LogicException('DetectIssueCandidatesJob must be integrated and implement ShouldQueue.');
                     }
-
                     if (config('queue.connections.database.driver') !== 'database') {
-                        throw new LogicException(
-                            'NLP detection requires the database queue driver.'
-                        );
+                        throw new LogicException('NLP detection requires the database queue driver.');
                     }
 
                     $job = (new DetectIssueCandidatesJob($issue->getKey()))
                         ->onConnection('database')
                         ->onQueue('nlp');
-
                     Bus::dispatch($job);
-
                 } catch (Throwable $exception) {
                     $statusException = null;
-
                     try {
-                        Issue::whereKey($issue->id)
-                            ->where('detection_status', 'PENDING')
+                        Issue::whereKey($issue->id)->where('detection_status', 'PENDING')
                             ->update(['detection_status' => 'FAILED']);
-
                     } catch (Throwable $failure) {
+                        // The issue is already committed. Do not turn a secondary
+                        // outage into a failed submit response that invites resubmission.
                         $statusException = $failure;
                     }
-
                     Log::error('Cannot enqueue issue NLP detection', [
                         'issue_id' => $issue->id,
                         'exception_type' => get_class($exception),
-                        'status_exception_type' => $statusException
-                            ? get_class($statusException)
-                            : null,
+                        'status_exception_type' => $statusException ? get_class($statusException) : null,
                     ]);
                 }
             });
@@ -124,28 +101,19 @@ class IssueController extends Controller
             return $issue;
         });
 
-        return redirect()
-            ->route('issues.show', [
-                'project' => $project,
-                'issue' => $issue
-            ])
+        return redirect()->route('issues.show', ['project' => $project, 'issue' => $issue])
             ->with('success', 'Issue berhasil dibuat');
     }
 
     public function index(Request $request, Project $project): View
     {
         $user = $request->user();
-
-        abort_unless(
-            $user && $this->projects->canAccessProject($user, $project),
-            403,
-            'Akses tidak tersedia'
-        );
-
+        abort_unless($user && $this->projects->canAccessProject($user, $project), 403, 'Akses tidak tersedia');
         if ($user->role === 'REPORTER') {
             $this->authorizeReporter($request, $project);
         }
 
+        // Scope every row to the project after checking the viewer's access.
         $issues = Issue::query()
             ->where('project_id', $project->getKey())
             ->orderByDesc('created_at')
@@ -155,19 +123,10 @@ class IssueController extends Controller
         return view('issues.index', compact('project', 'issues'));
     }
 
-    public function show(
-        Request $request,
-        Project $project,
-        Issue $issue
-    ): View {
+    public function show(Request $request, Project $project, Issue $issue): View
+    {
         $user = $request->user();
-
-        abort_unless(
-            $user && $this->projects->canAccessProject($user, $project),
-            403,
-            'Akses tidak tersedia'
-        );
-
+        abort_unless($user && $this->projects->canAccessProject($user, $project), 403, 'Akses tidak tersedia');
         if ($user->role === 'REPORTER') {
             $this->authorizeReporter($request, $project);
         }
@@ -176,65 +135,56 @@ class IssueController extends Controller
             abort(404);
         }
 
-        // Check whether the current user has voted for this issue.
-        $hasVoted = DB::table('issue_votes')
-            ->where('issue_id', $issue->id)
+        $votingIssue = $issue;
+        if ($issue->status === 'DUPLICATE') {
+            abort_unless($issue->duplicate_of !== null, 404);
+            $votingIssue = Issue::query()
+                ->whereKey($issue->duplicate_of)
+                ->where('project_id', $project->getKey())
+                ->first();
+
+            abort_unless(
+                $votingIssue !== null
+                    && $votingIssue->duplicate_of === null
+                    && $votingIssue->status !== 'DUPLICATE',
+                404
+            );
+        } else {
+            abort_unless($issue->duplicate_of === null, 404);
+        }
+
+        $canVote = $user->role === 'REPORTER'
+            && $project->memberships()
+                ->where('user_id', $user->getKey())
+                ->where('is_active', true)
+                ->exists();
+        $hasVoted = $votingIssue->votes()
             ->where('user_id', $user->id)
             ->exists();
 
-        // Get duplicate recommendations.
+        // Only display recommendations for issues belonging to this project.
+        // The show action above already enforces project access for the viewer.
         $recommendations = DuplicateCandidate::query()
             ->where('issue_id', $issue->getKey())
-            ->whereHas(
-                'candidateIssue',
-                fn ($query) => $query->where(
-                    'project_id',
-                    $project->getKey()
-                )
-            )
+            ->whereHas('candidateIssue', fn ($query) => $query->where('project_id', $project->getKey()))
             ->with('candidateIssue')
             ->orderByDesc('similarity_score')
             ->limit(10)
             ->get();
 
-        // Get duplicate review history.
         $reviewHistory = collect();
-
-        if (
-            $user->role === 'MAINTAINER' &&
-            (int) $project->owner_id === (int) $user->id
-        ) {
+        if ($user->role === 'MAINTAINER' && (int) $project->owner_id === (int) $user->id) {
             $reviewHistory = DB::table('activity_logs')
-                ->where('project_id', $project->id)
-                ->where('issue_id', $issue->id)
-                ->whereIn('action', [
-                    'DUPLICATE_REVIEW',
-                    'DUPLICATE_CORRECTED'
-                ])
-                ->orderByDesc('id')
-                ->limit(20)
-                ->get();
+                ->where('project_id', $project->id)->where('issue_id', $issue->id)
+                ->whereIn('action', ['DUPLICATE_REVIEW', 'DUPLICATE_CORRECTED'])
+                ->orderByDesc('id')->limit(20)->get();
         }
 
-        // Get issue status history.
         $statusHistory = DB::table('activity_logs')
-            ->where('project_id', $project->id)
-            ->where('issue_id', $issue->id)
-            ->whereIn('action', [
-                'ISSUE_STATUS_CHANGED',
-                'DUPLICATE_AUTO_CLOSED'
-            ])
-            ->orderByDesc('id')
-            ->limit(20)
-            ->get();
+            ->where('project_id', $project->id)->where('issue_id', $issue->id)
+            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
+            ->orderByDesc('id')->limit(20)->get();
 
-        return view('issues.show', compact(
-            'project',
-            'issue',
-            'recommendations',
-            'reviewHistory',
-            'statusHistory',
-            'hasVoted'
-        ));
+        return view('issues.show', compact('project', 'issue', 'votingIssue', 'canVote', 'hasVoted', 'recommendations', 'reviewHistory', 'statusHistory'));
     }
 }
