@@ -86,6 +86,34 @@ jobs:
           # Capture the true exit code with pipefail: failed BDD always fails the job.
           vendor/bin/behat --suite=sprint1 --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-sprint1.log
 
+      - name: Execute Register BDD acceptance tests
+        shell: bash
+        env:
+          APP_ENV: testing
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+          DB_URL: ''
+          SESSION_DRIVER: array
+          QUEUE_CONNECTION: sync
+        run: |
+          set -euo pipefail
+          export APP_KEY="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+          vendor/bin/behat --config=behat.register.yml --suite=register --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-register.log
+
+      - name: Execute Login/RBAC and OTP BDD acceptance tests
+        shell: bash
+        env:
+          APP_ENV: behat
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+          DB_URL: ''
+          MAIL_MAILER: array
+          QUEUE_CONNECTION: database
+        run: |
+          set -euo pipefail
+          export APP_KEY="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+          vendor/bin/behat --config=behat.auth.yml --suite=auth --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-auth.log
+
       - name: Publish full BDD scenario evidence
         if: always()
         shell: bash
@@ -100,7 +128,7 @@ jobs:
             echo ''
             echo "**GitHub Actions result:** ${BDD_OUTCOME}"
             echo ''
-            echo '**Tested flows:** Submit Issue, Deteksi Kemiripan NLP, Lihat Status Issue.'
+            echo '**Tested flows:** Register, Submit Issue, NLP, Issue Status, Logout, Project & Members, Login/RBAC, OTP.'
             echo ''
             echo 'Run command: `vendor/bin/behat --suite=sprint1 --format=pretty --no-colors`'
             echo ''
@@ -108,7 +136,7 @@ jobs:
               echo '### Test totals'
               echo ''
               echo '```text'
-              grep -E '^[0-9]+ scenarios? \(|^[0-9]+ steps? \(' ../bdd-evidence/behat-sprint1.log || true
+              grep -E '^[0-9]+ scenarios? \(|^[0-9]+ steps? \(' ../bdd-evidence/behat-*.log || true
               echo '```'
               echo ''
               echo '### Scenarios executed'
