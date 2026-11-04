@@ -11,6 +11,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -113,17 +116,33 @@ class IssueController extends Controller
             $this->authorizeReporter($request, $project);
         }
 
-        // Scope every row to the project after checking the viewer's access.
+        // GET-only read model for REQ-02. The project scope is mandatory.
+        $allowedStatuses = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'DUPLICATE'];
+        $validated = $request->validate([
+            'cari' => ['nullable', 'string', 'max:200'],
+            'status' => ['nullable', Rule::in($allowedStatuses)],
+        ]);
+        $cari = trim($validated['cari'] ?? '');
+        $status = $validated['status'] ?? '';
+
         $issues = Issue::query()
             ->where('project_id', $project->getKey())
+            ->when($cari !== '', static function ($query) use ($cari): void {
+                $query->where(static function ($nested) use ($cari): void {
+                    $nested->where('title', 'like', '%'.$cari.'%')
+                        ->orWhere('description', 'like', '%'.$cari.'%');
+                });
+            })
+            ->when($status !== '', static fn ($query) => $query->where('status', $status))
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->paginate(15);
+            ->paginate(15)
+            ->withQueryString();
 
-        return view('issues.index', compact('project', 'issues'));
+        return view('issues.index', compact('project', 'issues', 'cari', 'status', 'allowedStatuses'));
     }
 
-    public function show(Request $request, Project $project, Issue $issue): View
+    public function show(Request $request, Project $project, Issue $issue): View|Response
     {
         $user = $request->user();
         abort_unless($user && $this->projects->canAccessProject($user, $project), 403, 'Akses tidak tersedia');
@@ -132,8 +151,14 @@ class IssueController extends Controller
         }
 
         if ((int) $issue->project_id !== (int) $project->id) {
-            abort(404);
+            return response()->view('issues.not-found', compact('project'), 404);
         }
+
+        // Ensure a malformed or foreign-project parent link cannot be followed.
+        $parentIssue = $issue->duplicate_of === null ? null : Issue::query()
+            ->whereKey($issue->duplicate_of)
+            ->where('project_id', $project->getKey())
+            ->first();
 
         // Only display recommendations for issues belonging to this project.
         // The show action above already enforces project access for the viewer.
@@ -158,6 +183,40 @@ class IssueController extends Controller
             ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
             ->orderByDesc('id')->limit(20)->get();
 
-        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory'));
+        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory', 'parentIssue'));
+    }
+
+    /**
+     * REQ-02.7–02.8: refresh current status without mutating the issue.
+     * Called by the detail page through a same-origin GET request.
+     */
+    public function readStatus(Request $request, Project $project, Issue $issue): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($user && $this->projects->canAccessProject($user, $project), 403, 'Akses tidak tersedia');
+        if ($user->role === 'REPORTER') {
+            $this->authorizeReporter($request, $project);
+        }
+
+        if ((int) $issue->project_id !== (int) $project->id) {
+            return response()->json(['message' => 'Issue tidak tersedia'], 404);
+        }
+
+        $statusHistory = DB::table('activity_logs')
+            ->where('project_id', $project->getKey())
+            ->where('issue_id', $issue->getKey())
+            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
+            ->orderByDesc('id')
+            ->limit(20)
+            ->get(['action', 'created_at', 'reason']);
+
+        return response()->json([
+            'issue_id' => (int) $issue->getKey(),
+            'status' => $issue->status,
+            'detection_status' => $issue->detection_status,
+            'vote_count' => (int) $issue->vote_count,
+            'updated_at' => $issue->updated_at?->toIso8601String(),
+            'history' => $statusHistory,
+        ]);
     }
 }
