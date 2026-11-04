@@ -3,11 +3,16 @@
 # Sprint : 2
 # SRS Ref: Tabel 4.28 – REQ-05.1 s/d REQ-05.14
 #
-# ⚠️  BDD BLOCKED
-# Behat runner (branch feature/sprint1-bdd-behat / PR #35) belum di-merge ke main.
-# composer.json di main TIDAK memiliki behat/behat.
-# File ini mendokumentasikan skenario BDD sesuai SRS dan siap dijalankan begitu
-# PR #35 di-merge dan runner tersedia.
+# ⚠️  BDD: NOT EXECUTED
+# Alasan faktual:
+# 1. PR #40 yang mengintegrasikan Behat Sprint 1 sudah di-merge ke main, namun
+#    dependensi Behat di vendor lokal belum di-install (memerlukan composer install).
+# 2. Konfigurasi behat.yml di main saat ini baru mencakup suite 'sprint1'
+#    (features/sprint1). Suite sprint2 dan context definitions untuk REQ-05 belum
+#    terkonfigurasi di behat.yml.
+# 3. File skenario Gherkin ini telah lengkap mencakup seluruh skenario normal,
+#    alternatif, dan exception sesuai SRS Tabel 4.28 dan siap dijalankan begitu
+#    suite runner Sprint 2 dikonfigurasi.
 
 Feature: Review & Validasi Duplikat Issue (REQ-05)
   Sebagai Maintainer pemilik project
@@ -168,4 +173,3 @@ Feature: Review & Validasi Duplikat Issue (REQ-05)
     Given saya tidak login
     When saya mengunjungi halaman "/projects/{project}/duplicates"
     Then saya diarahkan ke "/login"
-
