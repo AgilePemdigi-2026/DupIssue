@@ -1,0 +1,125 @@
+name: Sprint 2 Feature 8 — PHPUnit and Behat Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/sprint2-feature8.yml'
+      - 'backend/**'
+      - 'docs/sprint2/**'
+      - 'docs/testing/sprint2/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sprint2-feature8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure PHP and SQLite
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, xml, pdo_sqlite, sqlite3, fileinfo, curl
+          coverage: none
+          tools: composer:v2
+
+      - name: Install locked dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress --optimize-autoloader
+
+      - name: Verify isolated test configuration
+        shell: bash
+        env:
+          APP_ENV: testing
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+          DB_URL: ''
+        run: |
+          set -euo pipefail
+          php -r '
+            $xml = simplexml_load_file("phpunit.xml");
+            if ($xml === false) { exit(1); }
+            $env = [];
+            foreach ($xml->php->env as $item) { $env[(string)$item["name"]] = (string)$item["value"]; }
+            if (($env["DB_CONNECTION"] ?? null) !== "sqlite" ||
+                ($env["DB_DATABASE"] ?? null) !== ":memory:" ||
+                ($env["DB_URL"] ?? null) !== "") {
+                fwrite(STDERR, "Unsafe PHPUnit database configuration\n"); exit(1);
+            }
+          '
+          test ! -f bootstrap/cache/config.php
+
+      - name: PHPUnit Feature 8 targeted tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../sprint2-evidence
+          php artisan test --filter=IssueRecommendationTest 2>&1 | tee ../sprint2-evidence/phpunit-feature8.log
+
+      - name: PHPUnit Submit Issue regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          php artisan test --filter=SubmitIssueTest 2>&1 | tee ../sprint2-evidence/phpunit-submit.log
+
+      - name: Full PHPUnit regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          php artisan test 2>&1 | tee ../sprint2-evidence/phpunit-full.log
+
+      - name: Prepare guarded Behat SQLite memory environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.behat.example .env.behat
+          php -r '
+            $f=".env.behat";
+            $c=file_get_contents($f);
+            if (!preg_match("/^APP_ENV=behat$/m", $c) ||
+                !preg_match("/^DB_CONNECTION=sqlite$/m", $c) ||
+                !preg_match("/^DB_DATABASE=:memory:$/m", $c)) {
+                fwrite(STDERR, "Unsafe BDD env\n"); exit(1);
+            }
+            $c=preg_replace("/^APP_KEY=.*$/m", "APP_KEY=base64:".base64_encode(random_bytes(32)), $c, 1, $n);
+            if ($n!==1 || file_put_contents($f,$c)===false) { exit(1); }
+          '
+          test ! -f bootstrap/cache/config.php
+
+      - name: Behat Sprint 2 acceptance tests
+        shell: bash
+        env:
+          APP_ENV: behat
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+          DB_URL: ''
+        run: |
+          set -euo pipefail
+          vendor/bin/behat --config=behat.yml --suite=sprint2 --format=pretty --no-colors 2>&1 | tee ../sprint2-evidence/behat-sprint2.log
+
+      - name: JavaScript and PHP syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/js/issue-recommendations.js
+          php -l app/Services/IssueRecommendationService.php
+          php -l routes/web.php
+
+      - name: Upload full regression logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sprint2-feature8-regression
+          path: sprint2-evidence/
+          if-no-files-found: warn
+          retention-days: 30
