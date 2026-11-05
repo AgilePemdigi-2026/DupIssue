@@ -16,3 +16,10 @@ default:
         - Soulcodex\Behat\Addon\RootContext: ~
         - FeatureContext
         - ProjectBddContext
+    sprint2:
+      paths:
+        - '%paths.base%/features/sprint2'
+      contexts:
+        - Soulcodex\Behat\Addon\RootContext: ~
+        - FeatureContext
+        - IssueRecommendationBddContext
