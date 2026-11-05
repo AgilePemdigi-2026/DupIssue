@@ -135,6 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check public/js/issue-recommendations.js
+          node --test tests/javascript/issue-recommendations.test.cjs 2>&1 | tee ../sprint2-evidence/javascript-interactions.log
           php -l app/Services/IssueRecommendationService.php
           php -l routes/web.php
 
