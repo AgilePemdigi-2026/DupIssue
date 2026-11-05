@@ -1,6 +1,6 @@
-# Feature 8 — Kebijakan Representasi Skor NLP (v1.1, untuk review)
+# Feature 8 — Kebijakan Representasi Skor NLP (v1.1)
 
-**Ruang lingkup:** hanya rekomendasi pre-submit pada `POST /projects/{project}/issues/recommendations`. Perubahan kebijakan tampilan ini **belum dinyatakan disetujui Joshua**. Dokumen ini menjelaskan keputusan teknis yang diusulkan untuk menyelesaikan review PR #39.
+**Ruang lingkup:** hanya rekomendasi pre-submit pada `POST /projects/{project}/issues/recommendations`. **Status keputusan:** menurut konfirmasi pemilik Feature 8 pada 5 November 2026, Joshua telah menyetujui kebijakan skor ini. Persetujuan teknis tersebut dibedakan dari persetujuan review formal PR #39 di GitHub, yang tetap perlu diberikan oleh reviewer.
 
 ## Sumber skor dan pemeringkatan
 
@@ -30,4 +30,4 @@ Setiap kandidat dengan `duplicate_of` bukan null (termasuk jika statusnya `CLOSE
 
 `IssueRecommendationTest` mencakup cosine `-1`, `0`, `1`, non-finite (`1e400`), nilai di luar rentang (`1.5`), tipe invalid (`"NaN"`), duplikat berstatus `CLOSED`, relasi self-parent, nested parent, serta parent dari project berbeda.
 
-**Konfirmasi yang diminta dari Joshua:** setujui tambahan `cosine_similarity` bertanda dalam respons dan wording `similarity` sebagai sinyal positif untuk tampilan, bukan probabilitas; atau tetapkan kebijakan skor alternatif sebelum PR ditandai *Ready for Review*.
+**Keputusan yang disetujui (dikonfirmasi oleh pemilik Feature 8):** field `cosine_similarity` menyajikan cosine mentah bertanda, sedangkan `similarity` menjadi indikator kekuatan cosine positif (0–1) untuk tampilan, bukan probabilitas. Tidak ada perubahan pada pipeline NLP pasca-submit. Persetujuan formal PR ditangani terpisah dalam review GitHub.
