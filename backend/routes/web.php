@@ -9,6 +9,7 @@ use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
+use App\Http\Controllers\VoteController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -53,7 +54,7 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [LoginController::class, 'authenticate'])
         ->middleware('throttle:5,1')
         ->name('login.authenticate');
-    
+
     // FORGOT PASSWORD - OTP
 
     Route::get('/forgot-password',
@@ -138,6 +139,10 @@ Route::middleware('auth')->group(function () {
         ->name('issues.index');
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show');
+    Route::post('/projects/{project}/issues/{issue}/vote', [VoteController::class, 'store'])
+        ->name('issues.vote');
+    Route::delete('/projects/{project}/issues/{issue}/vote', [VoteController::class, 'destroy'])
+        ->name('issues.unvote');
     Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
         [DuplicateReviewController::class, 'decide'])
         ->middleware('role:MAINTAINER')

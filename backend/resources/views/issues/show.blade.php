@@ -16,6 +16,38 @@
         @if (session('status_notice'))
             <div class="alert alert-info" role="status">{{ session('status_notice') }}</div>
         @endif
+
+        <div class="border rounded p-3 my-4">
+            <h2 class="h5 mb-1">Vote Issue</h2>
+            @if ($votingIssue->id !== $issue->id)
+                <p class="text-muted mb-1">
+                    Vote dicatat pada issue induk #{{ $votingIssue->id }}.
+                </p>
+            @endif
+            <p class="text-muted mb-2">
+                Jumlah Vote:
+                <strong>{{ number_format((int) $votingIssue->vote_count) }}</strong>
+            </p>
+            @if ($canVote)
+                @if ($hasVoted)
+                    <form method="POST" action="{{ route('issues.unvote', ['project' => $project, 'issue' => $issue]) }}">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Apakah kamu yakin ingin membatalkan vote?')">Batalkan Vote</button>
+                    </form>
+                @else
+                    <form method="POST" action="{{ route('issues.vote', ['project' => $project, 'issue' => $issue]) }}">
+                        @csrf
+                        <button type="submit" class="btn btn-primary">Vote Issue</button>
+                    </form>
+                @endif
+            @endif
+            <p class="text-muted small mt-2 mb-0">
+                Kamu hanya dapat memberikan satu vote untuk setiap issue.
+                Vote dapat dibatalkan kapan saja.
+            </p>
+        </div>
+
         @if ($issue->duplicate_of)
             <div class="alert alert-warning" role="status">
                 Issue ini telah ditandai sebagai duplikat.

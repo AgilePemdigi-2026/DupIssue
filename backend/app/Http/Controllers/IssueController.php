@@ -135,6 +135,33 @@ class IssueController extends Controller
             abort(404);
         }
 
+        $votingIssue = $issue;
+        if ($issue->status === 'DUPLICATE') {
+            abort_unless($issue->duplicate_of !== null, 404);
+            $votingIssue = Issue::query()
+                ->whereKey($issue->duplicate_of)
+                ->where('project_id', $project->getKey())
+                ->first();
+
+            abort_unless(
+                $votingIssue !== null
+                    && $votingIssue->duplicate_of === null
+                    && $votingIssue->status !== 'DUPLICATE',
+                404
+            );
+        } else {
+            abort_unless($issue->duplicate_of === null, 404);
+        }
+
+        $canVote = $user->role === 'REPORTER'
+            && $project->memberships()
+                ->where('user_id', $user->getKey())
+                ->where('is_active', true)
+                ->exists();
+        $hasVoted = $votingIssue->votes()
+            ->where('user_id', $user->id)
+            ->exists();
+
         // Only display recommendations for issues belonging to this project.
         // The show action above already enforces project access for the viewer.
         $recommendations = DuplicateCandidate::query()
@@ -158,6 +185,6 @@ class IssueController extends Controller
             ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
             ->orderByDesc('id')->limit(20)->get();
 
-        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory'));
+        return view('issues.show', compact('project', 'issue', 'votingIssue', 'canVote', 'hasVoted', 'recommendations', 'reviewHistory', 'statusHistory'));
     }
 }
