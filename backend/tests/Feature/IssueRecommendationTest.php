@@ -332,6 +332,167 @@ class IssueRecommendationTest extends TestCase
         });
     }
 
+
+    public function test_closed_child_with_duplicate_of_links_to_original_parent(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->makeReporter($project);
+        $parent = $this->makeIssue($project, 'Original checkout issue');
+        $child = $this->makeIssue($project, 'Previously closed duplicate');
+        $child->status = 'CLOSED';
+        $child->duplicate_of = $parent->id;
+        $child->save();
+
+        Http::fake([
+            'http://127.0.0.1:8001/candidates' => Http::response([
+                'candidates' => [
+                    ['issue_id' => $child->id, 'similarity' => 0.87],
+                ],
+            ], 200),
+        ]);
+
+        $this->actingAs($reporter)
+            ->postJson(route('issues.recommendations', $project), $this->payload())
+            ->assertOk()
+            ->assertJsonCount(1, 'recommendations')
+            ->assertJsonPath('recommendations.0.issue_id', $child->id)
+            ->assertJsonPath('recommendations.0.target_issue_id', $parent->id)
+            ->assertJsonPath('recommendations.0.status', 'CLOSED')
+            ->assertJsonPath('recommendations.0.cosine_similarity', 0.87)
+            ->assertJsonPath('recommendations.0.detail_url', route('issues.show', [
+                'project' => $project, 'issue' => $parent,
+            ], false));
+
+        $child->refresh();
+        $this->assertSame('CLOSED', $child->status);
+        $this->assertSame((int) $parent->id, (int) $child->duplicate_of);
+        $this->assertDatabaseCount('issues', 2);
+    }
+
+    public function test_recommendations_skip_self_parent_and_nested_parent(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->makeReporter($project);
+        $root = $this->makeIssue($project, 'Root issue');
+        $intermediate = $this->makeIssue($project, 'Intermediate duplicate');
+        $intermediate->status = 'DUPLICATE';
+        $intermediate->duplicate_of = $root->id;
+        $intermediate->save();
+        $nested = $this->makeIssue($project, 'Nested child');
+        $nested->status = 'CLOSED';
+        $nested->duplicate_of = $intermediate->id;
+        $nested->save();
+        $self = $this->makeIssue($project, 'Self reference');
+        $self->status = 'CLOSED';
+        $self->duplicate_of = $self->id;
+        $self->save();
+        $orphan = $this->makeIssue($project, 'Unlinked duplicate');
+        $orphan->status = 'DUPLICATE';
+        $orphan->save();
+
+        Http::fake([
+            'http://127.0.0.1:8001/candidates' => Http::response([
+                'candidates' => [
+                    ['issue_id' => $nested->id, 'similarity' => 0.97],
+                    ['issue_id' => $self->id, 'similarity' => 0.96],
+                    ['issue_id' => $orphan->id, 'similarity' => 0.95],
+                    ['issue_id' => $root->id, 'similarity' => 0.65],
+                ],
+            ], 200),
+        ]);
+
+        $this->actingAs($reporter)
+            ->postJson(route('issues.recommendations', $project), $this->payload())
+            ->assertOk()
+            ->assertJsonCount(1, 'recommendations')
+            ->assertJsonPath('recommendations.0.issue_id', $root->id)
+            ->assertJsonPath('recommendations.0.target_issue_id', $root->id);
+    }
+
+    public function test_signed_cosine_and_nonnegative_display_score_include_boundaries(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->makeReporter($project);
+        $negative = $this->makeIssue($project, 'Negative cosine');
+        $zero = $this->makeIssue($project, 'Zero cosine');
+        $positive = $this->makeIssue($project, 'Positive cosine');
+
+        Http::fake([
+            'http://127.0.0.1:8001/candidates' => Http::response([
+                'candidates' => [
+                    ['issue_id' => $negative->id, 'similarity' => -1.0],
+                    ['issue_id' => $zero->id, 'similarity' => 0.0],
+                    ['issue_id' => $positive->id, 'similarity' => 1.0],
+                ],
+            ], 200),
+        ]);
+
+        $this->actingAs($reporter)
+            ->postJson(route('issues.recommendations', $project), $this->payload())
+            ->assertOk()
+            ->assertJsonCount(3, 'recommendations')
+            ->assertJsonPath('recommendations.0.issue_id', $positive->id)
+            ->assertJsonPath('recommendations.0.similarity', 1)
+            ->assertJsonPath('recommendations.0.cosine_similarity', 1)
+            ->assertJsonPath('recommendations.1.issue_id', $zero->id)
+            ->assertJsonPath('recommendations.1.similarity', 0)
+            ->assertJsonPath('recommendations.1.cosine_similarity', 0)
+            ->assertJsonPath('recommendations.2.issue_id', $negative->id)
+            ->assertJsonPath('recommendations.2.similarity', 0)
+            ->assertJsonPath('recommendations.2.cosine_similarity', -1);
+    }
+
+    public function test_non_finite_and_out_of_range_cosine_scores_are_ignored(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->makeReporter($project);
+        $nonFinite = $this->makeIssue($project, 'Overflow cosine');
+        $outOfRange = $this->makeIssue($project, 'Invalid cosine');
+        $valid = $this->makeIssue($project, 'Valid cosine');
+
+        // Valid JSON containing an exponent that PHP decodes to INF.
+        $rawJson = '{"candidates":['
+            .'{"issue_id":'.$nonFinite->id.',"similarity":1e400},'
+            .'{"issue_id":'.$outOfRange->id.',"similarity":1.5},'
+            .'{"issue_id":'.$valid->id.',"similarity":0.64}'
+            .']}';
+
+        Http::fake([
+            'http://127.0.0.1:8001/candidates' => Http::response(
+                $rawJson,
+                200,
+                ['Content-Type' => 'application/json']
+            ),
+        ]);
+
+        $this->actingAs($reporter)
+            ->postJson(route('issues.recommendations', $project), $this->payload())
+            ->assertOk()
+            ->assertJsonCount(1, 'recommendations')
+            ->assertJsonPath('recommendations.0.issue_id', $valid->id)
+            ->assertJsonPath('recommendations.0.cosine_similarity', 0.64);
+    }
+
+    public function test_invalid_string_similarity_is_rejected_safely(): void
+    {
+        $project = $this->makeProject();
+        $reporter = $this->makeReporter($project);
+        $candidate = $this->makeIssue($project, 'Invalid string score');
+
+        Http::fake([
+            'http://127.0.0.1:8001/candidates' => Http::response([
+                'candidates' => [
+                    ['issue_id' => $candidate->id, 'similarity' => 'NaN'],
+                ],
+            ], 200),
+        ]);
+
+        $this->actingAs($reporter)
+            ->postJson(route('issues.recommendations', $project), $this->payload())
+            ->assertStatus(503)
+            ->assertJsonPath('code', 'NLP_UNAVAILABLE');
+    }
+
     public function test_maintainer_and_non_member_reporter_are_rejected(): void
     {
         $project = $this->makeProject();

@@ -40,8 +40,9 @@
         <hr class="my-3">
 
         <p class="small text-muted mb-0">
-            Skor kemiripan merupakan rekomendasi,
-            bukan keputusan duplikat.
+            Persentase adalah sinyal cosine positif yang dibatasi 0–100%,
+            bukan peluang atau keputusan duplikat. Nilai cosine mentah
+            ditampilkan terpisah; 0% dapat berarti cosine nol atau negatif.
         </p>
     </div>
 </aside>

@@ -77,26 +77,27 @@ class IssueRecommendationService
             $rawScore = (float) $item['similarity'];
 
             // Skor harus berupa angka finite.
-            if (! is_finite($rawScore)) {
+            // Cosine valid berada di [-1, 1]; beri toleransi kecil untuk float.
+            if (! is_finite($rawScore) ||
+                $rawScore < -1.000001 || $rawScore > 1.000001) {
                 continue;
             }
 
             $target = $candidate;
 
-            // Kandidat duplikat diarahkan ke issue induknya.
-            if ($candidate->status === 'DUPLICATE') {
-                $parentId = $candidate->duplicate_of;
+            // Relasi duplicate_of menentukan issue anak, termasuk saat CLOSED.
+            // Status DUPLICATE tanpa parent valid tidak boleh ditautkan ke dirinya.
+            if ($candidate->duplicate_of !== null) {
+                $parentId = (int) $candidate->duplicate_of;
 
-                if (
-                    $parentId === null ||
-                    (int) $parentId === (int) $candidate->id
-                ) {
+                if ($parentId <= 0 || $parentId === (int) $candidate->id) {
                     continue;
                 }
 
                 $parent = $issueMap->get($parentId);
 
-                // Parent wajib valid dan berada pada project sama.
+                // Peta issue sudah dibatasi ke project aktif.
+                // Parent harus root (tidak punya parent lain) dan bukan DUPLICATE.
                 if (
                     ! $parent ||
                     (int) $parent->project_id !== (int) $project->id ||
@@ -107,6 +108,9 @@ class IssueRecommendationService
                 }
 
                 $target = $parent;
+            } elseif ($candidate->status === 'DUPLICATE') {
+                // Data tidak konsisten: DUPLICATE tanpa relasi induk.
+                continue;
             }
 
             $results[] = [
@@ -121,6 +125,10 @@ class IssueRecommendationService
                     0.0,
                     min(1.0, $rawScore)
                 ),
+                // Skor cosine signed agar nilai negatif tidak disamarkan.
+                // similarity adalah kekuatan positif untuk progress UI,
+                // bukan probabilitas duplikat.
+                'cosine_similarity' => $rawScore,
 
                 'detail_url' => route(
                     'issues.show',

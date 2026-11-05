@@ -1,4 +1,3 @@
-
 default:
   extensions:
     Soulcodex\Behat:
@@ -17,7 +16,6 @@ default:
         - Soulcodex\Behat\Addon\RootContext: ~
         - FeatureContext
         - ProjectBddContext
-
     sprint2:
       paths:
         - '%paths.base%/features/sprint2'

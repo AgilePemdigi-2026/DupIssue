@@ -1,0 +1,169 @@
+name: Sprint 1 BDD (Behat + Mink)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/bdd-sprint1.yml'
+      - 'backend/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bdd-sprint1.yml'
+      - 'backend/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  behat-bdd:
+    name: Behat/Mink acceptance tests (no PHPUnit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure PHP for Behat
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, xml, pdo_sqlite, sqlite3, fileinfo, curl
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies (locked versions)
+        run: composer install --no-interaction --prefer-dist --no-progress --optimize-autoloader
+
+      - name: Prepare isolated in-memory BDD environment
+        shell: bash
+        env:
+          APP_ENV: behat
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+        run: |
+          set -euo pipefail
+          cp .env.behat.example .env.behat
+          php -r '
+            $file = ".env.behat";
+            $config = file_get_contents($file);
+            if ($config === false ||
+                !preg_match("/^APP_ENV=behat$/m", $config) ||
+                !preg_match("/^DB_CONNECTION=sqlite$/m", $config) ||
+                !preg_match("/^DB_DATABASE=:memory:$/m", $config)) {
+                fwrite(STDERR, "Unsafe BDD environment template\n");
+                exit(1);
+            }
+            $key = "base64:" . base64_encode(random_bytes(32));
+            $config = preg_replace("/^APP_KEY=.*$/m", "APP_KEY=" . $key, $config, 1, $count);
+            if ($count !== 1 || file_put_contents($file, $config) === false) {
+                fwrite(STDERR, "Could not prepare BDD app key\n");
+                exit(1);
+            }
+          '
+          test -f .env.behat
+          test ! -f bootstrap/cache/config.php
+          echo "BDD environment: APP_ENV=behat, DB_CONNECTION=sqlite, DB_DATABASE=:memory:"
+          echo "No development database, FastAPI live service, or PHPUnit execution."
+
+      - name: Execute Sprint 1 BDD acceptance tests
+        id: run_bdd
+        shell: bash
+        env:
+          APP_ENV: behat
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+        run: |
+          set -euo pipefail
+          mkdir -p ../bdd-evidence
+          # Run Behat once. Pretty prints each scenario and every Given/When/Then step.
+          # Capture the true exit code with pipefail: failed BDD always fails the job.
+          vendor/bin/behat --suite=sprint1 --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-sprint1.log
+
+      - name: Execute Register BDD acceptance tests
+        shell: bash
+        env:
+          APP_ENV: testing
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+          DB_URL: ''
+          SESSION_DRIVER: array
+          QUEUE_CONNECTION: sync
+        run: |
+          set -euo pipefail
+          export APP_KEY="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+          vendor/bin/behat --config=behat.register.yml --suite=register --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-register.log
+
+      - name: Execute Login/RBAC and OTP BDD acceptance tests
+        shell: bash
+        env:
+          APP_ENV: behat
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+          DB_URL: ''
+          MAIL_MAILER: array
+          QUEUE_CONNECTION: database
+        run: |
+          set -euo pipefail
+          export APP_KEY="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+          vendor/bin/behat --config=behat.auth.yml --suite=auth --format=pretty --no-colors 2>&1 | tee ../bdd-evidence/behat-auth.log
+
+      - name: Publish full BDD scenario evidence
+        if: always()
+        shell: bash
+        env:
+          BDD_OUTCOME: ${{ steps.run_bdd.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../bdd-evidence
+          report=../bdd-evidence/BDD_REPORT.md
+          {
+            echo '## Sprint 1 — BDD Testing (Behat + Mink)'
+            echo ''
+            echo "**GitHub Actions result:** ${BDD_OUTCOME}"
+            echo ''
+            echo '**Tested flows:** Register, Submit Issue, NLP, Issue Status, Logout, Project & Members, Login/RBAC, OTP.'
+            echo ''
+            echo 'Run command: `vendor/bin/behat --suite=sprint1 --format=pretty --no-colors`'
+            echo ''
+            if [ -f ../bdd-evidence/behat-sprint1.log ]; then
+              echo '### Test totals'
+              echo ''
+              echo '```text'
+              grep -E '^[0-9]+ scenarios? \(|^[0-9]+ steps? \(' ../bdd-evidence/behat-*.log || true
+              echo '```'
+              echo ''
+              echo '### Scenarios executed'
+              echo ''
+              grep -E '^[[:space:]]*(Scenario:|Scenario Outline:|Example:)' ../bdd-evidence/behat-sprint1.log | sed -E 's/^[[:space:]]*/- /' || true
+              echo ''
+              echo '<details><summary>Full Behat execution: scenarios and Given/When/Then steps</summary>'
+              echo ''
+              echo '```gherkin'
+              cat ../bdd-evidence/behat-sprint1.log
+              echo '```'
+              echo ''
+              echo '</details>'
+            else
+              echo '**No BDD execution log was generated.** Inspect preceding setup steps.'
+            fi
+            echo ''
+            echo '**Testing method:** Behat + Mink BDD only. No PHPUnit commands.'
+            echo ''
+            echo 'Evidence files are also uploaded below as a downloadable GitHub Actions artifact.'
+          } | tee "$report" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload detailed BDD evidence to GitHub
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bdd-sprint1-behat-results
+          path: bdd-evidence/
+          if-no-files-found: warn
+          retention-days: 30

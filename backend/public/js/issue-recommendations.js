@@ -193,7 +193,9 @@
             recommendations.slice(0, 3).forEach((issue) => {
                 if (typeof issue.title !== "string" ||
                     typeof issue.similarity !== "number" ||
-                    !Number.isFinite(issue.similarity)) {
+                    !Number.isFinite(issue.similarity) ||
+                    typeof issue.cosine_similarity !== "number" ||
+                    !Number.isFinite(issue.cosine_similarity)) {
                     throw new Error("Invalid recommendation item");
                 }
 
@@ -243,7 +245,7 @@
                     "d-flex justify-content-between small mb-1";
 
                 const scoreLabel = document.createElement("span");
-                scoreLabel.textContent = "Kemiripan";
+                scoreLabel.textContent = "Sinyal kemiripan positif";
 
                 const scoreValue = document.createElement("strong");
                 scoreValue.textContent = `${formattedPercentage}%`;
@@ -281,7 +283,15 @@
                     openRecommendationDetail(issue);
                 });
 
-                card.append(score, progress, detailButton);
+                const rawScore = document.createElement("p");
+                rawScore.className = "small text-muted mt-2 mb-0";
+                const signedCosine = new Intl.NumberFormat(
+                    "id-ID",
+                    { maximumFractionDigits: 4 }
+                ).format(issue.cosine_similarity);
+                rawScore.textContent = `Cosine mentah: ${signedCosine}`;
+
+                card.append(score, progress, rawScore, detailButton);
                 fragment.append(card);
 
             });
