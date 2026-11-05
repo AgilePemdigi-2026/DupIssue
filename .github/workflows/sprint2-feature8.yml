@@ -59,6 +59,29 @@ jobs:
           '
           test ! -f bootstrap/cache/config.php
 
+      - name: Prepare ephemeral SQLite-only test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_key="$(php -r 'echo "base64:".base64_encode(random_bytes(32));')"
+          {
+            echo 'APP_NAME=DupIssue-CI'
+            echo 'APP_ENV=testing'
+            echo "APP_KEY=$app_key"
+            echo 'APP_DEBUG=true'
+            echo 'APP_URL=http://localhost'
+            echo 'DB_CONNECTION=sqlite'
+            echo 'DB_DATABASE=:memory:'
+            echo 'DB_URL='
+            echo 'SESSION_DRIVER=array'
+            echo 'CACHE_STORE=array'
+            echo 'QUEUE_CONNECTION=sync'
+            echo 'MAIL_MAILER=array'
+            echo 'NLP_SERVICE_URL=http://nlp.test'
+          } > .env.testing
+          cp .env.testing .env
+          test ! -f bootstrap/cache/config.php
+
       - name: PHPUnit Feature 8 targeted tests
         shell: bash
         run: |
