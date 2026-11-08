@@ -500,7 +500,11 @@ class SourceIssueControllerTest extends TestCase
 
         $this->from($this->sourceUrl($project))
             ->post($this->importUrl($project))
-            ->assertRedirect($this->sourceUrl($project))
+            ->assertRedirect(
+                route('sources.index', [
+                    'project' => $project->id,
+                ])
+            )
             ->assertSessionHas('success')
             ->assertSessionHas(
                 'csv_import_result.imported_count',
@@ -548,7 +552,11 @@ class SourceIssueControllerTest extends TestCase
         $this->actingAs($owner)
             ->from($this->sourceUrl($project))
             ->post($this->importUrl($project))
-            ->assertRedirect($this->sourceUrl($project))
+            ->assertRedirect(
+                route('sources.index', [
+                    'project' => $project->id,
+                ])
+            )
             ->assertSessionHasErrors('file');
 
         $this->assertDatabaseCount('issues', 0);
@@ -774,7 +782,11 @@ class SourceIssueControllerTest extends TestCase
         // Kirim konfirmasi ke URL yang digunakan form.
         $this->from($this->sourceUrl($project))
             ->post($importUrl)
-            ->assertRedirect($this->sourceUrl($project))
+            ->assertRedirect(
+                route('sources.index', [
+                    'project' => $project->id,
+                ])
+            )
             ->assertSessionHas('success')
             ->assertSessionHas(
                 'csv_import_result.imported_count',
@@ -792,5 +804,41 @@ class SourceIssueControllerTest extends TestCase
         $this->assertDatabaseCount('import_batches', 1);
         $this->assertDatabaseCount('activity_logs', 1);
     }
+
+
+    public function test_failed_import_from_preview_redirects_to_source_page(): void
+    {
+        Storage::fake('local');
+
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+
+        $sourceUrl = route('sources.index', [
+            'project' => $project->id,
+        ]);
+
+        $previewUrl = route('sources.csv.preview', [
+            'project' => $project->id,
+        ]);
+
+        // Simulasi pengguna berada pada halaman hasil POST preview,
+        // tetapi session file sementara sudah tidak tersedia.
+        $response = $this->actingAs($owner)
+            ->from($previewUrl)
+            ->post($this->importUrl($project));
+
+        // Kegagalan harus diarahkan ke halaman GET yang valid.
+        $response
+            ->assertRedirect($sourceUrl)
+            ->assertSessionHasErrors('file');
+
+        // Halaman tujuan harus dapat dibuka.
+        $this->get($sourceUrl)->assertOk();
+
+        // Tidak boleh menyimpan issue ketika konfirmasi gagal.
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
+    }
+
 
 }

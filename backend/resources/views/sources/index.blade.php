@@ -632,11 +632,13 @@
     </div>
 </div>
 
+
 <!-- Informasi Status Integrasi -->
 <div class="alert alert-info mt-4 small" role="status">
     <i class="bi bi-info-circle me-1"></i>
-    Fitur konfirmasi impor CSV dan koneksi GitHub
-    masih dalam tahap integrasi.
+    Impor CSV sudah tersedia, termasuk validasi,
+    pratinjau, konfirmasi, dan pencatatan riwayat impor.
+    Integrasi repository GitHub masih dalam tahap pengembangan.
 </div>
 
 @endsection

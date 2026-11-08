@@ -136,11 +136,39 @@ class SourceIssueController extends Controller
 
 
     /**
+     * Endpoint konfirmasi impor CSV.
+     * Jika validasi gagal, kembali ke halaman GET Sumber Issue.
+     */
+    public function importCsv(
+        Request $request,
+        Project $project,
+        CsvIssueReader $reader,
+        CsvIssueImportService $importService
+    ): RedirectResponse {
+        try {
+            return $this->performCsvImport(
+                $request,
+                $project,
+                $reader,
+                $importService
+            );
+        } catch (ValidationException $exception) {
+            throw $exception->redirectTo(
+                route('sources.index', [
+                    'project' => $project->id,
+                ])
+            );
+        }
+    }
+
+
+
+    /**
      * Konfirmasi impor CSV dari file sementara di server.
      * File dibaca ulang; data preview dari browser tidak dipercaya.
      * REQ-04.5 sampai REQ-04.9
      */
-    public function importCsv(
+    private function performCsvImport(
         Request $request,
         Project $project,
         CsvIssueReader $reader,
@@ -272,7 +300,11 @@ class SourceIssueController extends Controller
 
         $disk->delete($path);
 
-        return back()
+
+        return redirect()
+            ->route('sources.index', [
+                'project' => $project->id,
+            ])
             ->with(
                 'success',
                 'Impor CSV berhasil: '

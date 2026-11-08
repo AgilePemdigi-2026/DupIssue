@@ -74,8 +74,15 @@ class CsvIssueImportService
             $batch->skipped_rows =
                 $result['invalid_count']
                 + $result['already_imported_count'];
+
             $batch->status = 'PROCESSING';
+
+            // Gunakan waktu UTC dari Laravel agar konsisten
+            // dengan timestamp pada activity_logs.
+            $batch->created_at = now();
+
             $batch->save();
+
 
             $issueIds = [];
 

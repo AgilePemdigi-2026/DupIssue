@@ -183,3 +183,11 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/invitations', [ProjectMemberController::class, 'reporterInvitations'])->name('invitations.index');
     Route::post('/invitations/{invitationId}/respond', [ProjectMemberController::class, 'respondInvitation'])->name('invitations.respond');
 });
+
+/*
+|--------------------------------------------------------------------------
+| FEATURE 11 — MENGELOLA SUMBER ISSUE
+|--------------------------------------------------------------------------
+| Route CSV dan GitHub dipisahkan agar tidak mengganggu modul lain.
+*/
+require __DIR__ . '/issue_sources.php';
