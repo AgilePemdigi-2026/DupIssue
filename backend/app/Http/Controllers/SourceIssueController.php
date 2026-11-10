@@ -3,16 +3,24 @@
 namespace App\Http\Controllers;
 
 use App\Services\CsvIssueImportService;
+use App\Services\GithubApiClient;
+use App\Services\GithubIssuePreviewService;
+use App\Services\GithubIssueImportService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\UploadedFile;
 use App\Models\Project;
+use App\Models\GithubConfig;
 use App\Services\CsvIssuePreviewService;
 use App\Services\CsvIssueReader;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
 
 class SourceIssueController extends Controller
 {
@@ -44,7 +52,277 @@ class SourceIssueController extends Controller
 
         return view('sources.index', [
             'project' => $project,
+            'githubRepoFullName' => GithubConfig::query()
+                ->where('project_id', $project->id)
+                ->value('repo_full_name'),
         ]);
+    }
+
+    /**
+     * Menguji koneksi repository GitHub tanpa menyimpan PAT.
+     * REQ-04.10 dan REQ-04.12.
+     */
+    public function testGithubConnection(
+        Request $request,
+        Project $project,
+        GithubApiClient $githubClient
+    ): JsonResponse {
+        $this->authorizeOwner($request, $project);
+
+        $validator = Validator::make(
+            $request->only(['repo_full_name', 'pat']),
+            [
+                'repo_full_name' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+                'pat' => [
+                    'required',
+                    'string',
+                    'max:512',
+                ],
+            ]
+        );
+
+        // Validasi manual agar PAT tidak tersimpan sebagai
+        // old input pada session ketika validasi gagal.
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data koneksi GitHub tidak valid.',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
+        try {
+            $repository = $githubClient->testConnection(
+                $validated['repo_full_name'],
+                $validated['pat']
+            );
+        } catch (RuntimeException $exception) {
+            $apiStatus = $exception->getCode();
+
+            $status = match (true) {
+                $apiStatus === 429 => 429,
+                $apiStatus >= 500 => 502,
+                default => 422,
+            };
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], $status);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Koneksi GitHub berhasil diuji.',
+            'repository' => $repository,
+        ]);
+    }
+
+    /**
+     * Menyimpan konfigurasi repository dan PAT GitHub.
+     * REQ-04.11 dan REQ-04.12.
+     */
+    public function saveGithubConnection(
+        Request $request,
+        Project $project,
+        GithubApiClient $githubClient
+    ): JsonResponse {
+        $this->authorizeOwner($request, $project);
+
+        $validator = Validator::make(
+            $request->only(['repo_full_name', 'pat']),
+            [
+                'repo_full_name' => [
+                    'required', 'string', 'max:255',
+                ],
+                'pat' => [
+                    'required', 'string', 'max:512',
+                ],
+            ]
+        );
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data koneksi GitHub tidak valid.',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
+        // Uji ulang di server sebelum menyimpan.
+        // Konfigurasi lama tidak berubah jika koneksi gagal.
+        try {
+            $repository = $githubClient->testConnection(
+                $validated['repo_full_name'],
+                $validated['pat']
+            );
+        } catch (RuntimeException $exception) {
+            $apiStatus = $exception->getCode();
+
+            $status = match (true) {
+                $apiStatus === 429 => 429,
+                $apiStatus >= 500 => 502,
+                default => 422,
+            };
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], $status);
+        }
+
+        $repoFullName = $repository['repo_full_name'];
+
+        // Serialisasi penyimpanan berdasarkan project untuk
+        // mencegah konfigurasi ganda akibat request bersamaan.
+        DB::transaction(function () use (
+            $project,
+            $repoFullName,
+            $validated
+        ): void {
+            Project::query()
+                ->whereKey($project->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $config = GithubConfig::query()
+                ->where('project_id', $project->id)
+                ->first();
+
+            if ($config === null) {
+                $config = new GithubConfig();
+                $config->project_id = $project->id;
+            }
+
+            $repositoryChanged = $config->exists
+                && $config->repo_full_name !== $repoFullName;
+
+            $config->repo_full_name = $repoFullName;
+
+            // Eloquent encrypted cast mengenkripsi PAT.
+            // Jangan mengenkripsi lagi secara manual.
+            $config->pat_encrypted = $validated['pat'];
+
+            if ($repositoryChanged) {
+                $config->last_synced_at = null;
+            }
+
+            $config->save();
+        });
+
+        // Batalkan preview lama setelah koneksi berhasil disimpan.
+        // Preview harus dibuat ulang menggunakan konfigurasi terbaru.
+        $request->session()->forget(
+            'source_issue.github_preview'
+        );
+
+        // PAT tidak dikembalikan kepada browser.
+        return response()->json([
+            'success' => true,
+            'message' => 'Koneksi GitHub berhasil disimpan.',
+            'repository' => [
+                'repo_full_name' => $repoFullName,
+                'private' => $repository['private'],
+            ],
+        ]);
+    }
+
+    /**
+     * Mengambil dan memvalidasi issue GitHub untuk pratinjau.
+     * Tidak menyimpan issue ke database.
+     *
+     * REQ-04.13 sampai REQ-04.15.
+     */
+    public function previewGithubIssues(
+        Request $request,
+        Project $project,
+        GithubApiClient $githubClient,
+        GithubIssuePreviewService $previewService
+    ): JsonResponse {
+        $this->authorizeOwner($request, $project);
+
+        // Batalkan metadata preview sebelumnya.
+        $request->session()->forget(
+            'source_issue.github_preview'
+        );
+
+        // Gunakan hanya konfigurasi milik project aktif.
+        $config = GithubConfig::query()
+            ->where('project_id', $project->id)
+            ->first();
+
+        if ($config === null) {
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Koneksi GitHub belum disimpan untuk project ini.',
+            ], 409);
+        }
+
+        try {
+            // PAT dibaca melalui Eloquent encrypted cast.
+            // Token tidak dikembalikan kepada browser.
+            $githubIssues = $githubClient->fetchIssues(
+                $config->repo_full_name,
+                $config->pat_encrypted
+            );
+
+            $preview = $previewService->preview(
+                $project,
+                $config->repo_full_name,
+                $githubIssues
+            );
+        } catch (RuntimeException $exception) {
+            $apiStatus = $exception->getCode();
+
+            $status = match (true) {
+                $apiStatus === 429 => 429,
+                $apiStatus >= 500 => 502,
+                $apiStatus === 0 => 503,
+                default => 422,
+            };
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], $status);
+        }
+
+        // Fingerprint untuk verifikasi ulang saat konfirmasi.
+        // Tidak menyimpan seluruh issue atau PAT di session.
+        $fingerprint = hash(
+            'sha256',
+            json_encode(
+                $preview['rows'],
+                JSON_THROW_ON_ERROR
+            )
+        );
+
+        $request->session()->put(
+            'source_issue.github_preview',
+            [
+                'project_id' => (int) $project->id,
+                'actor_id' => (int) $request->user()->id,
+                'config_id' => (int) $config->id,
+                'repo_full_name' => $config->repo_full_name,
+                'fingerprint' => $fingerprint,
+                'expires_at' => now()->addMinutes(30)->timestamp,
+            ]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pratinjau issue GitHub berhasil dimuat.',
+            'preview' => $preview,
+        ])->header('Cache-Control', 'no-store');
     }
 
     /**
@@ -322,6 +600,127 @@ class SourceIssueController extends Controller
                 'already_imported_count' =>
                     $result['already_imported_count'],
             ]);
+    }
+
+
+    /**
+     * Confirm import of GitHub issues previously previewed.
+     *
+     * GitHub is fetched again before the database transaction.
+     * The import service verifies the preview fingerprint
+     * inside the transaction.
+     */
+    public function confirmGithubImport(
+        Request $request,
+        Project $project,
+        GithubApiClient $githubClient,
+        GithubIssueImportService $importService
+    ): JsonResponse {
+        $this->authorizeOwner($request, $project);
+
+        // Require an explicit confirmation from the user.
+        $request->validate([
+            'confirmed' => ['required', 'accepted'],
+        ]);
+
+        $pending = $request->session()->get(
+            'source_issue.github_preview'
+        );
+
+        // Verify the session belongs to this actor and project.
+        // Expired or malformed previews cannot be confirmed.
+        if (
+            ! is_array($pending)
+            || ! is_int($pending['project_id'] ?? null)
+            || ! is_int($pending['actor_id'] ?? null)
+            || ! is_int($pending['config_id'] ?? null)
+            || ! is_string($pending['repo_full_name'] ?? null)
+            || ! is_string($pending['fingerprint'] ?? null)
+            || ! is_int($pending['expires_at'] ?? null)
+            || $pending['project_id'] !== (int) $project->id
+            || $pending['actor_id'] !== (int) $request->user()->id
+            || $pending['expires_at'] <= now()->timestamp
+        ) {
+            $request->session()->forget(
+                'source_issue.github_preview'
+            );
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Pratinjau GitHub tidak tersedia atau sudah kedaluwarsa. '
+                    . 'Ambil ulang issue sebelum mengimpor.',
+            ], 409);
+        }
+
+        // Check that the saved connection has not changed.
+        $config = GithubConfig::query()
+            ->where('project_id', $project->id)
+            ->first();
+
+        if (
+            $config === null
+            || (int) $config->id !== $pending['config_id']
+            || $config->repo_full_name !== $pending['repo_full_name']
+        ) {
+            $request->session()->forget(
+                'source_issue.github_preview'
+            );
+
+            return response()->json([
+                'success' => false,
+                'message' =>
+                    'Konfigurasi GitHub berubah. '
+                    . 'Ambil ulang pratinjau sebelum mengimpor.',
+            ], 409);
+        }
+
+        try {
+            // Fetch all issues again, outside the DB transaction.
+            // PAT is never sent back to the browser.
+            $githubIssues = $githubClient->fetchIssues(
+                $config->repo_full_name,
+                $config->pat_encrypted
+            );
+        } catch (\RuntimeException $exception) {
+            $apiStatus = $exception->getCode();
+
+            $status = match (true) {
+                $apiStatus === 429 => 429,
+                $apiStatus >= 500 => 502,
+                $apiStatus === 0 => 503,
+                default => 422,
+            };
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], $status)->header('Cache-Control', 'no-store');
+        }
+
+        // The service rechecks authorization, configuration,
+        // fingerprint, and existing issues under DB locking.
+        // Laravel handles ValidationException as HTTP 422.
+        $result = $importService->import(
+            $project,
+            $request->user(),
+            $pending['config_id'],
+            $pending['repo_full_name'],
+            $githubIssues,
+            $pending['fingerprint']
+        );
+
+        // Successful confirmation consumes the preview.
+        // A new import requires a new preview.
+        $request->session()->forget(
+            'source_issue.github_preview'
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Issue GitHub berhasil diimpor.',
+            'result' => $result,
+        ])->header('Cache-Control', 'no-store');
     }
 
 }

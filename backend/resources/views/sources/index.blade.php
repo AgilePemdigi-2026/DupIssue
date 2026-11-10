@@ -531,6 +531,11 @@
 
             <div class="tab-pane fade"
                  id="github-panel"
+                 data-connected-repo="{{ $githubRepoFullName ?? '' }}"
+                 data-test-url="{{ route('sources.github.test', ['project' => $project->id]) }}"
+                 data-save-url="{{ route('sources.github.save', ['project' => $project->id]) }}"
+                 data-preview-url="{{ route('sources.github.preview', ['project' => $project->id]) }}"
+                 data-import-url="{{ route('sources.github.import', ['project' => $project->id]) }}"
                  role="tabpanel"
                  aria-labelledby="github-tab"
                  tabindex="0">
@@ -544,86 +549,185 @@
                     melalui GitHub REST API.
                 </p>
 
-                <!-- Repository -->
-                <div class="mb-3">
+                <!-- Form Koneksi GitHub -->
+                <form id="github-connection-form"
+                      autocomplete="off"
+                      novalidate>
+                    @csrf
 
-                    <label for="github-repo"
-                           class="form-label fw-semibold">
-                        Repository
-                    </label>
+                    <div class="mb-3">
+                        <label for="github-repo"
+                               class="form-label fw-semibold">
+                            Repository
+                        </label>
 
-                    <input
-                        type="text"
-                        id="github-repo"
-                        name="repository"
-                        class="form-control"
-                        placeholder="owner/repository"
-                        disabled
-                    >
+                        <input type="text"
+                               id="github-repo"
+                               name="repo_full_name"
+                               value="{{ $githubRepoFullName ?? '' }}"
+                               class="form-control"
+                               placeholder="owner/repository"
+                               maxlength="255"
+                               spellcheck="false"
+                               autocapitalize="off"
+                               autocomplete="off"
+                               required>
 
-                    <div class="form-text">
-                        Contoh: pandas-dev/pandas
+                        <div class="form-text">
+                            Contoh: pandas-dev/pandas
+                        </div>
                     </div>
 
-                </div>
+                    <div class="mb-3">
+                        <label for="github-pat"
+                               class="form-label fw-semibold">
+                            Personal Access Token (PAT)
+                        </label>
 
-                <!-- GitHub PAT -->
-                <div class="mb-3">
+                        <input type="password"
+                               id="github-pat"
+                               name="pat"
+                               class="form-control"
+                               autocomplete="new-password"
+                               placeholder="Masukkan token akses GitHub"
+                               required>
 
-                    <label for="github-pat"
-                           class="form-label fw-semibold">
-                        Personal Access Token (PAT)
-                    </label>
-
-                    <input
-                        type="password"
-                        id="github-pat"
-                        name="pat"
-                        class="form-control"
-                        autocomplete="off"
-                        placeholder="Masukkan token akses GitHub"
-                        disabled
-                    >
-
-                    <div class="form-text">
-                        Token akan diproses secara aman di backend.
+                        <div class="form-text">
+                            Token disimpan secara terenkripsi di backend
+                            dan tidak ditampilkan kembali.
+                        </div>
                     </div>
 
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="button"
+                                id="github-test-btn"
+                                class="btn btn-outline-primary"
+                                disabled>
+                            <i class="bi bi-plug me-1"></i>
+                            Uji Koneksi
+                        </button>
+
+                        <button type="button"
+                                id="github-save-btn"
+                                class="btn btn-primary"
+                                disabled>
+                            <i class="bi bi-save me-1"></i>
+                            Simpan Koneksi
+                        </button>
+
+                        <button type="button"
+                                id="github-preview-btn"
+                                class="btn btn-outline-secondary"
+                                disabled>
+                            <i class="bi bi-arrow-repeat me-1"></i>
+                            Ambil Issue
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Notifikasi operasi GitHub -->
+                <div id="github-feedback"
+                     class="alert d-none mt-3"
+                     role="status"
+                     aria-live="polite">
                 </div>
 
-                <!-- Tombol GitHub -->
-                <div class="d-flex flex-wrap gap-2">
+                <!-- Hasil Pratinjau GitHub -->
+                <section id="github-preview-section"
+                         class="mt-4 d-none"
+                         aria-labelledby="github-preview-heading">
 
-                    <button
-                        type="button"
-                        class="btn btn-outline-primary"
-                        disabled
-                    >
-                        Uji Koneksi
-                    </button>
+                    <hr class="my-4">
 
-                    <button
-                        type="button"
-                        class="btn btn-primary"
-                        disabled
-                    >
-                        Simpan Koneksi
-                    </button>
+                    <h3 id="github-preview-heading"
+                        class="h5 fw-bold mb-2">
+                        Pratinjau Issue GitHub
+                    </h3>
 
-                    <button
-                        type="button"
-                        class="btn btn-outline-secondary"
-                        disabled
-                    >
-                        Ambil Issue
-                    </button>
+                    <p class="text-muted small mb-3">
+                        Periksa issue sebelum mengonfirmasi impor.
+                        Hanya issue berstatus VALID yang akan disimpan.
+                    </p>
 
-                </div>
+                    <div class="row g-3 mb-4">
+                        <div class="col-sm-6 col-lg-3">
+                            <div class="border rounded p-3 h-100">
+                                <div class="small text-muted">
+                                    Total Issue
+                                </div>
+                                <div id="github-total-count"
+                                     class="fs-4 fw-bold">0</div>
+                            </div>
+                        </div>
+
+                        <div class="col-sm-6 col-lg-3">
+                            <div class="border rounded p-3 h-100">
+                                <div class="small text-muted">
+                                    Valid Baru
+                                </div>
+                                <div id="github-valid-count"
+                                     class="fs-4 fw-bold text-success">0</div>
+                            </div>
+                        </div>
+
+                        <div class="col-sm-6 col-lg-3">
+                            <div class="border rounded p-3 h-100">
+                                <div class="small text-muted">
+                                    Invalid
+                                </div>
+                                <div id="github-invalid-count"
+                                     class="fs-4 fw-bold text-danger">0</div>
+                            </div>
+                        </div>
+
+                        <div class="col-sm-6 col-lg-3">
+                            <div class="border rounded p-3 h-100">
+                                <div class="small text-muted">
+                                    Sudah Diimpor
+                                </div>
+                                <div id="github-imported-count"
+                                     class="fs-4 fw-bold">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover align-middle small">
+                            <thead class="table-light">
+                                <tr>
+                                    <th scope="col">No.</th>
+                                    <th scope="col">Issue</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Keterangan</th>
+                                    <th scope="col">Sumber</th>
+                                </tr>
+                            </thead>
+
+                            <tbody id="github-preview-rows">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mt-3">
+                        <p class="small text-muted mb-0">
+                            Data invalid dan issue yang sudah diimpor
+                            akan dilewati.
+                        </p>
+
+                        <button type="button"
+                                id="github-import-btn"
+                                class="btn btn-success"
+                                disabled>
+                            <i class="bi bi-check-circle me-1"></i>
+                            Konfirmasi Impor
+                        </button>
+                    </div>
+                </section>
 
                 <div class="alert alert-secondary small mt-4 mb-0">
                     <i class="bi bi-info-circle me-1"></i>
-                    Integrasi GitHub akan diaktifkan setelah
-                    endpoint dan mekanisme autentikasi selesai dibuat.
+                    Issue GitHub harus melalui pratinjau
+                    sebelum dapat diimpor.
                 </div>
 
             </div>
@@ -636,9 +740,13 @@
 <!-- Informasi Status Integrasi -->
 <div class="alert alert-info mt-4 small" role="status">
     <i class="bi bi-info-circle me-1"></i>
-    Impor CSV sudah tersedia, termasuk validasi,
+    Impor CSV dan GitHub tersedia dengan validasi,
     pratinjau, konfirmasi, dan pencatatan riwayat impor.
-    Integrasi repository GitHub masih dalam tahap pengembangan.
+    Issue GitHub yang berhasil diimpor akan diproses oleh
+    layanan NLP untuk menghasilkan rekomendasi kandidat duplikat.
 </div>
+
+<script src="{{ asset('js/github-connection.js') }}" defer></script>
+<script src="{{ asset('js/github-preview.js') }}" defer></script>
 
 @endsection

@@ -41,4 +41,41 @@ Route::middleware(['auth', 'role:MAINTAINER'])
             ->middleware('throttle:10,1')
             ->name('sources.csv.import');
 
+        // Uji koneksi GitHub tanpa menyimpan konfigurasi.
+        // REQ-04.10 dan REQ-04.12.
+        Route::post(
+            '/projects/{project}/sources/github/test',
+            [SourceIssueController::class, 'testGithubConnection']
+        )
+            ->middleware('throttle:10,1')
+            ->name('sources.github.test');
+
+        // Simpan konfigurasi repository dan PAT terenkripsi.
+        // REQ-04.11 dan REQ-04.12.
+        Route::post(
+            '/projects/{project}/sources/github/save',
+            [SourceIssueController::class, 'saveGithubConnection']
+        )
+            ->middleware('throttle:10,1')
+            ->name('sources.github.save');
+
+        // Ambil issue GitHub dan tampilkan pratinjau.
+        // Tidak menyimpan issue sebelum konfirmasi impor.
+        // REQ-04.13 sampai REQ-04.15.
+        Route::post(
+            '/projects/{project}/sources/github/preview',
+            [SourceIssueController::class, 'previewGithubIssues']
+        )
+            ->middleware('throttle:10,1')
+            ->name('sources.github.preview');
+
+        // Konfirmasi impor issue GitHub setelah preview.
+        // Memerlukan confirmed=true dan session preview valid.
+        Route::post(
+            '/projects/{project}/sources/github/import',
+            [SourceIssueController::class, 'confirmGithubImport']
+        )
+            ->middleware('throttle:10,1')
+            ->name('sources.github.import');
+
     });
