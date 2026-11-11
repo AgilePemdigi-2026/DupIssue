@@ -50,13 +50,12 @@ class VoteController extends Controller
         Project $project,
         Issue $issue
     ): Issue {
-        $snapshot = Issue::query()
-            ->whereKey($issue->getKey())
-            ->firstOrFail();
-
-        $issueIds = [$snapshot->getKey()];
-        if ($snapshot->duplicate_of !== null) {
-            $issueIds[] = (int) $snapshot->duplicate_of;
+        // Route binding resolved $issue before the transaction. Do not perform
+        // a plain SELECT inside the transaction before acquiring row locks:
+        // InnoDB REPEATABLE READ would establish a stale consistent-read snapshot.
+        $issueIds = [(int) $issue->getKey()];
+        if ($issue->duplicate_of !== null) {
+            $issueIds[] = (int) $issue->duplicate_of;
         }
 
         $lockedIssues = Issue::query()
@@ -66,8 +65,18 @@ class VoteController extends Controller
             ->get()
             ->keyBy('id');
 
-        $lockedIssue = $lockedIssues->get($snapshot->getKey());
+        $lockedIssue = $lockedIssues->get((int) $issue->getKey());
         abort_unless($lockedIssue !== null, 404);
+
+        // Recheck the locked row against the route-bound copy. If a concurrent
+        // status review changed its parent, do not proceed with an incomplete
+        // lock set or accidentally vote for the old parent.
+        abort_unless(
+            ($lockedIssue->duplicate_of === null ? null : (int) $lockedIssue->duplicate_of)
+                === ($issue->duplicate_of === null ? null : (int) $issue->duplicate_of),
+            409,
+            'Relasi parent issue berubah, silakan ulangi permintaan.'
+        );
 
         abort_unless(
             (int) $lockedIssue->project_id === (int) $project->id,
