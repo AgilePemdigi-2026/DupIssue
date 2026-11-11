@@ -9,6 +9,9 @@ use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
+use App\Models\Project;
+use App\Services\ProjectService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -136,8 +139,28 @@ Route::middleware('auth')->group(function () {
         ->name('issues.recommendations');
     Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
         ->name('issues.index');
+
+    Route::get('/projects/{project}/issues/{issue}/status', [IssueController::class, 'readStatus'])
+        ->name('issues.status.read');
+
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
-        ->name('issues.show');
+        ->name('issues.show')
+        ->missing(static function (Request $request) {
+            $project = $request->route('project');
+            if (! $project instanceof Project) {
+                abort(404);
+            }
+
+            // Do not reveal whether an issue exists to unauthorised users.
+            $user = $request->user();
+            abort_unless($user && app(ProjectService::class)->canAccessProject($user, $project),
+                403, 'Akses tidak tersedia');
+            if ($user->role === 'REPORTER') {
+                abort_unless($project->memberships()->where('user_id', $user->id)
+                    ->where('is_active', true)->exists(), 403, 'Akses tidak tersedia');
+            }
+            return response()->view('issues.not-found', compact('project'), 404);
+        });
     Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
         [DuplicateReviewController::class, 'decide'])
         ->middleware('role:MAINTAINER')
