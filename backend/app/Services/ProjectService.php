@@ -53,8 +53,7 @@ class ProjectService
 
         $cleanName = trim($data['name']);
 
-        DB::beginTransaction();
-        try {
+        return DB::transaction(function () use ($creator, $cleanName, $data) {
             // Validasi keunikan nama project secara case-insensitive (panduan final)
             $existingProject = Project::where('name', $cleanName)->exists();
             if ($existingProject) {
@@ -81,24 +80,8 @@ class ProjectService
                 ],
             ]);
 
-            DB::commit();
-
             return $project;
-        } catch (ValidationException $e) {
-            DB::rollBack();
-            if (isset($e->validator) && $e->validator->errors()->has('name') && Project::where('name', $cleanName)->doesntExist()) {
-                DB::table('projects')->insert([
-                    'owner_id' => $creator->id,
-                    'name' => $cleanName,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-            throw $e;
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        });
     }
 
     /**
@@ -138,8 +121,7 @@ class ProjectService
 
         $cleanName = trim($data['name']);
 
-        DB::beginTransaction();
-        try {
+        return DB::transaction(function () use ($user, $project, $cleanName, $data) {
             $lockedProject = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
 
             if ($user->id !== $lockedProject->owner_id || $user->role !== 'MAINTAINER') {
@@ -176,24 +158,8 @@ class ProjectService
                 ],
             ]);
 
-            DB::commit();
-
             return $lockedProject;
-        } catch (ValidationException $e) {
-            DB::rollBack();
-            if (isset($e->validator) && $e->validator->errors()->has('name') && Project::where('name', $cleanName)->doesntExist()) {
-                DB::table('projects')->insert([
-                    'owner_id' => $user->id,
-                    'name' => $cleanName,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-            throw $e;
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        });
     }
 
     /**

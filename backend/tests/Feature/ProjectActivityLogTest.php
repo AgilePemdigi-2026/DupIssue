@@ -532,4 +532,127 @@ class ProjectActivityLogTest extends TestCase
         $this->assertDatabaseMissing('projects', ['name' => 'xy']);
         $this->assertDatabaseCount('activity_logs', 0);
     }
+
+    /**
+     * Regression test P1: Memastikan penanganan ValidationException di dalam transaksi
+     * pada createProject() TIDAK melakukan insert project liar setelah DB::rollBack().
+     */
+    public function test_create_project_duplicate_name_inside_transaction_rolls_back_without_orphan_insert(): void
+    {
+        $maintainer = User::factory()->create(['role' => 'MAINTAINER']);
+        $service = app(ProjectService::class);
+
+        // Buat project awal
+        $existing = Project::factory()->create([
+            'name' => 'Sistem Informasi DupIssue',
+            'owner_id' => $maintainer->id,
+        ]);
+        $initialProjectsCount = Project::count();
+        $initialTxLevel = DB::transactionLevel();
+
+        // Coba buat project dengan nama sama persis atau beda kapitalisasi (case-insensitive)
+        try {
+            $service->createProject($maintainer, [
+                'name' => 'sistem informasi dupissue',
+                'description' => 'Deskripsi yang seharusnya tidak tersimpan',
+            ]);
+            $this->fail('Expected ValidationException for duplicate project name inside transaction');
+        } catch (ValidationException $e) {
+            $this->assertTrue($e->validator->errors()->has('name'));
+            $this->assertSame('Nama sudah digunakan', $e->validator->errors()->first('name'));
+        }
+
+        // Verifikasi kondisi database pasca-exception:
+        // 1. Transaction level harus kembali utuh (tidak ada transaksi menggantung)
+        $this->assertSame($initialTxLevel, DB::transactionLevel(), 'TransactionLevel harus kembali ke tingkat awal');
+        // 2. Jumlah project tidak boleh bertambah sama sekali (tidak ada orphan insert)
+        $this->assertSame($initialProjectsCount, Project::count(), 'Tidak boleh ada project baru yang ter-insert setelah rollback');
+        // 3. Deskripsi yang dioperasikan pada percobaan gagal tidak boleh ada di database
+        $this->assertDatabaseMissing('projects', ['description' => 'Deskripsi yang seharusnya tidak tersimpan']);
+        // 4. Tidak boleh ada activity log yang tersimpan dari operasi gagal
+        $this->assertDatabaseCount('activity_logs', 0);
+    }
+
+    /**
+     * Regression test P1: Memastikan penanganan ValidationException di dalam transaksi
+     * pada updateProject() TIDAK melakukan insert project liar setelah DB::rollBack().
+     */
+    public function test_update_project_duplicate_name_inside_transaction_rolls_back_without_orphan_insert(): void
+    {
+        [$owner, , $projectA] = $this->fixture();
+        $projectB = Project::factory()->create([
+            'name' => 'Project Beta Eksklusif',
+            'owner_id' => $owner->id,
+        ]);
+
+        $service = app(ProjectService::class);
+        $initialProjectsCount = Project::count();
+        $initialTxLevel = DB::transactionLevel();
+        $originalProjectAName = $projectA->name;
+        $originalProjectADesc = $projectA->description;
+
+        // Coba update Project A menggunakan nama Project B (berbeda huruf besar/kecil)
+        try {
+            $service->updateProject($owner, $projectA, [
+                'name' => 'project beta eksklusif',
+                'description' => 'Deskripsi baru yang gagal',
+            ]);
+            $this->fail('Expected ValidationException for duplicate name on update');
+        } catch (ValidationException $e) {
+            $this->assertTrue($e->validator->errors()->has('name'));
+            $this->assertSame('Nama sudah digunakan', $e->validator->errors()->first('name'));
+        }
+
+        // Verifikasi pasca-exception:
+        // 1. Transaction level utuh
+        $this->assertSame($initialTxLevel, DB::transactionLevel(), 'TransactionLevel harus kembali ke tingkat awal');
+        // 2. Jumlah total project di database tidak boleh bertambah (tidak ada orphan insert di update)
+        $this->assertSame($initialProjectsCount, Project::count(), 'Update gagal tidak boleh menciptakan project baru');
+        // 3. Data projectA lama tidak boleh terubah
+        $freshA = $projectA->fresh();
+        $this->assertSame($originalProjectAName, $freshA->name);
+        $this->assertSame($originalProjectADesc, $freshA->description);
+        // 4. Tidak ada activity log dari operasi update yang gagal
+        $this->assertDatabaseCount('activity_logs', 0);
+    }
+
+    /**
+     * Regression test P1: Memastikan jika ValidationException dilempar setelah stage penyimpanan
+     * di dalam transaksi, seluruh perubahan project di-rollback penuh dan tidak ada insert liar.
+     */
+    public function test_create_project_simulated_validation_exception_in_transaction_leaves_no_data(): void
+    {
+        $maintainer = User::factory()->create(['role' => 'MAINTAINER']);
+        $service = app(ProjectService::class);
+        $initialProjectsCount = Project::count();
+        $initialTxLevel = DB::transactionLevel();
+
+        // Simulasikan ValidationException terjadi tepat setelah record project di-save
+        // dengan memanfaatkan event Eloquent atau beforeExecuting
+        $triggered = false;
+        Project::saving(function (Project $p) use (&$triggered): void {
+            if ($p->name === 'Project Simulated Fail') {
+                $triggered = true;
+                throw ValidationException::withMessages([
+                    'name' => 'Nama sudah digunakan',
+                ]);
+            }
+        });
+
+        try {
+            $service->createProject($maintainer, [
+                'name' => 'Project Simulated Fail',
+                'description' => 'Simulasi gagal',
+            ]);
+            $this->fail('Expected ValidationException from saving event');
+        } catch (ValidationException $e) {
+            $this->assertTrue($e->validator->errors()->has('name'));
+        }
+
+        $this->assertTrue($triggered, 'Event saving harus terpanggil');
+        $this->assertSame($initialTxLevel, DB::transactionLevel());
+        $this->assertSame($initialProjectsCount, Project::count());
+        $this->assertDatabaseMissing('projects', ['name' => 'Project Simulated Fail']);
+        $this->assertDatabaseCount('activity_logs', 0);
+    }
 }
