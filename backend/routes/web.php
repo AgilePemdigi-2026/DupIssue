@@ -144,7 +144,6 @@ Route::middleware('auth')->group(function () {
         ->name('issues.status.read');
 
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
-    Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
         ->name('issues.show')
         ->missing(static function (Request $request) {
             $project = $request->route('project');

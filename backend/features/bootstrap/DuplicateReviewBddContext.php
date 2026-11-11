@@ -27,6 +27,8 @@ final class DuplicateReviewBddContext extends Context
     private ?DuplicateCandidate $candidatePair = null;
     private int $dispatchedJobCount = 0;
     private ?int $lastStatusCode = null;
+    private ?string $lastResponseContent = null;
+    private mixed $lastResponse = null;
 
     /** @Given terdapat project :name milik Maintainer :email */
     public function terdapatProjectMilikMaintainer(string $name, string $email): void
@@ -334,17 +336,28 @@ final class DuplicateReviewBddContext extends Context
     private function postWithCsrf(string $url, array $parameters = []): void
     {
         $client = $this->session()->getDriver()->getClient();
+        $client->followRedirects(false);
         $token = csrf_token() ?: (string) session()->token();
         $parameters['_token'] = $token;
+        $referer = $this->session()->getCurrentUrl() ?: ('http://localhost' . $url);
         $server = [
             'HTTP_X_CSRF_TOKEN' => $token,
             'HTTP_ACCEPT' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'HTTP_REFERER' => $referer,
         ];
         try {
             $client->request('POST', $url, $parameters, [], $server);
+            $this->lastResponse = $client->getResponse();
             $this->lastStatusCode = $client->getResponse()->getStatusCode();
+            $this->lastResponseContent = (string) $client->getResponse()->getContent();
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            $this->lastResponse = $client->getResponse();
             $this->lastStatusCode = $e->getStatusCode();
+            $this->lastResponseContent = $e->getMessage();
+        } catch (\Throwable $e) {
+            $this->lastResponse = $client->getResponse();
+            $this->lastStatusCode = 500;
+            $this->lastResponseContent = $e->getMessage();
         }
     }
 
@@ -452,8 +465,51 @@ final class DuplicateReviewBddContext extends Context
     /** @Then /^saya mendapat error validasi "([^"]*)"$/ */
     public function sayaMendapatErrorValidasi(string $error): void
     {
-        // Validation redirect with session errors
-        return;
+        $allErrors = [];
+
+        // 1. Check from RedirectResponse session if available
+        $resp = $this->lastResponse;
+        if ($resp && method_exists($resp, 'getSession') && $resp->getSession()) {
+            $bag = $resp->getSession()->get('errors');
+            if ($bag && method_exists($bag, 'all')) {
+                $allErrors = array_merge($allErrors, $bag->all());
+            }
+        }
+
+        // 2. Check from global session
+        if (session('errors')) {
+            $allErrors = array_merge($allErrors, session('errors')->all());
+        }
+        if (app('session.store')->get('errors')) {
+            $allErrors = array_merge($allErrors, app('session.store')->get('errors')->all());
+        }
+
+        $allErrors = array_unique($allErrors);
+
+        $found = false;
+        foreach ($allErrors as $msg) {
+            if (str_contains($msg, $error)) {
+                $found = true;
+                break;
+            }
+        }
+
+        if (! $found) {
+            $client = $this->session()->getDriver()->getClient();
+            try {
+                if ($this->lastStatusCode === 302) {
+                    $client->followRedirect();
+                }
+                $pageText = $this->session()->getPage()->getText();
+                if (str_contains($pageText, $error)) {
+                    $found = true;
+                }
+            } catch (\Throwable) {}
+        }
+
+        if (! $found) {
+            throw new RuntimeException("Error validasi '$error' tidak ditemukan di session atau halaman. Error yang ada: " . json_encode($allErrors));
+        }
     }
 
     /** @Then Issue #:id masih berstatus :status */
@@ -529,6 +585,16 @@ final class DuplicateReviewBddContext extends Context
     {
         if ((int) $this->lastStatusCode !== (int) $code) {
             throw new RuntimeException("Status code diharapkan $code, tetapi didapatkan {$this->lastStatusCode}");
+        }
+
+        $content = $this->lastResponseContent ?? '';
+        $pageText = '';
+        try {
+            $pageText = $this->session()->getPage()->getText();
+        } catch (\Throwable $e) {}
+
+        if (! str_contains($content, $msg) && ! str_contains($pageText, $msg)) {
+            throw new RuntimeException("Pesan '$msg' tidak ditemukan dalam respon status $code. Konten respon: '$content'");
         }
     }
 
@@ -626,8 +692,26 @@ final class DuplicateReviewBddContext extends Context
     /** @Then respon redirect dengan flash :key */
     public function responRedirectDenganFlash(string $key): void
     {
-        if ($this->lastStatusCode !== 302 && $this->lastStatusCode !== 301 && $this->lastStatusCode !== 200) {
-            throw new RuntimeException("Diharapkan redirect (302), didapatkan status {$this->lastStatusCode}");
+        if ($this->lastStatusCode !== 302 && $this->lastStatusCode !== 301) {
+            throw new RuntimeException("Diharapkan redirect (302/301), didapatkan status {$this->lastStatusCode}");
+        }
+
+        $hasFlash = false;
+        $resp = $this->lastResponse;
+        if ($resp && method_exists($resp, 'getSession') && $resp->getSession()) {
+            $session = $resp->getSession();
+            $hasFlash = $session->has($key) || $session->get($key) !== null;
+        }
+
+        if (! $hasFlash) {
+            $hasFlash = session()->has($key)
+                || app('session.store')->has($key)
+                || session()->get($key) !== null
+                || app('session.store')->get($key) !== null;
+        }
+
+        if (! $hasFlash) {
+            throw new RuntimeException("Flash message dengan key '$key' tidak ditemukan di session.");
         }
     }
 

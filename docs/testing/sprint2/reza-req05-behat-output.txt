@@ -1,14 +1,7 @@
-Feature: Review & Validasi Duplikat Issue (REQ-05)
-  Sebagai Maintainer pemilik project
-  Saya ingin meninjau dan memvalidasi kandidat duplikat issue yang terdeteksi NLP
-  Agar daftar issue tetap bersih dan tidak redundan
-
-  Background:                                                                                     # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:22
-    Given terdapat project "Proyek Alpha" milik Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::terdapatProjectMilikMaintainer()
-    And terdapat Reporter "budi@kel4.dev" yang aktif di project tersebut                          # DuplicateReviewBddContext::terdapatReporterYangAktif()
-    And terdapat Issue #1 "Bug Login" dengan detection_status "COMPLETED" dan vote_count 5        # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatusDanVotes()
-    And terdapat Issue #2 "Gagal Masuk Akun" dengan detection_status "COMPLETED" dan vote_count 2 # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatusDanVotes()
-    And terdapat DuplicateCandidate dengan similarity_score 0.885 antara Issue #1 dan Issue #2    # DuplicateReviewBddContext::terdapatDuplicateCandidate()
+Feature: Rekomendasi Issue Serupa sebelum Submit Issue
+  Sebagai Reporter yang menjadi anggota aktif project
+  Saya ingin melihat rekomendasi issue serupa sebelum mengirim laporan
+  Agar dapat memeriksa kemungkinan issue yang sudah pernah dilaporkan
 
   ┌─ @BeforeScenario # FeatureContext::beforeScenario()
   │
@@ -16,21 +9,95 @@ Feature: Review & Validasi Duplikat Issue (REQ-05)
   │  
   │  
   │
-  Scenario: Maintainer melihat daftar kandidat duplikat project    # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:30
+  Scenario: Reporter dapat membuka formulir dengan panel rekomendasi             # features\sprint2\01_rekomendasi_issue_serupa.feature:6
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"          # FeatureContext::iAmAnActiveMember()
+    When I am on "/projects/1/submit"                                            # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should see "Kirim Issue"                                              # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    And I should see "Isi judul dan deskripsi untuk melihat rekomendasi."        # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+
+  Scenario: Reporter mendapatkan Top 3 rekomendasi dari project yang sama                                                                                       # features\sprint2\01_rekomendasi_issue_serupa.feature:14
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER"                                                                                # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"                                                                                         # FeatureContext::iAmAnActiveMember()
+    And I have four comparison issues in my project and one in another project                                                                                  # IssueRecommendationBddContext::iHaveFourComparisonIssues()
+    And I have deterministic NLP rankings for Sprint 2                                                                                                          # IssueRecommendationBddContext::iHaveDeterministicNlpRankings()
+    When I request pre-submit recommendations with title "Tombol bayar tidak merespons" and description "Saat checkout tombol bayar gagal memproses transaksi." # IssueRecommendationBddContext::iRequestPreSubmitRecommendations()
+    Then I should receive exactly 3 recommendations ordered by similarity                                                                                       # IssueRecommendationBddContext::iShouldReceiveTopThree()
+    And I should receive no recommendations from another project                                                                                                # IssueRecommendationBddContext::iShouldReceiveNoForeignRecommendations()
+    And I should find no new draft issue in the database                                                                                                        # IssueRecommendationBddContext::iShouldFindNoNewDraftIssue()
+
+  Scenario: Layanan NLP tidak tersedia saat Reporter meminta rekomendasi         # features\sprint2\01_rekomendasi_issue_serupa.feature:25
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"          # FeatureContext::iAmAnActiveMember()
+    And I have an existing issue "Checkout gagal diproses" in my project         # FeatureContext::iHaveAnExistingIssue()
+    And I have an NLP service failure with HTTP status 503                       # FeatureContext::iHaveAnNlpServiceFailure()
+    When I request pre-submit recommendations while NLP is unavailable           # IssueRecommendationBddContext::iRequestRecommendationsWhileNlpUnavailable()
+    Then I should receive HTTP 503 with code "NLP_UNAVAILABLE"                   # IssueRecommendationBddContext::iShouldReceiveHttpWithCode()
+    And I should find no new draft issue in the database                         # IssueRecommendationBddContext::iShouldFindNoNewDraftIssue()
+
+  Scenario: Reporter mengirim judul terlalu pendek saat meminta rekomendasi      # features\sprint2\01_rekomendasi_issue_serupa.feature:35
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"          # FeatureContext::iAmAnActiveMember()
+    When I request pre-submit recommendations with invalid "title" "abc"         # IssueRecommendationBddContext::iRequestRecommendationsWithInvalidInput()
+    Then I should receive HTTP 422 with validation error for "title"             # IssueRecommendationBddContext::iShouldReceiveValidationError()
+    And I should find no new draft issue in the database                         # IssueRecommendationBddContext::iShouldFindNoNewDraftIssue()
+
+  Scenario: Reporter mengirim deskripsi terlalu pendek saat meminta rekomendasi  # features\sprint2\01_rekomendasi_issue_serupa.feature:42
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"          # FeatureContext::iAmAnActiveMember()
+    When I request pre-submit recommendations with invalid "description" "abc"   # IssueRecommendationBddContext::iRequestRecommendationsWithInvalidInput()
+    Then I should receive HTTP 422 with validation error for "description"       # IssueRecommendationBddContext::iShouldReceiveValidationError()
+    And I should find no new draft issue in the database                         # IssueRecommendationBddContext::iShouldFindNoNewDraftIssue()
+
+  Scenario: Reporter dengan keanggotaan tidak aktif ditolak                      # features\sprint2\01_rekomendasi_issue_serupa.feature:49
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"          # FeatureContext::iAmAnActiveMember()
+    And I am not an active member of project "DupIssue Testing"                  # FeatureContext::iAmNotAnActiveMember()
+    When I am on "/projects/1/submit"                                            # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should be denied project access                                       # FeatureContext::iShouldBeDeniedProjectAccess()
+
+  Scenario: Maintainer tidak dapat mengakses formulir Submit Issue Reporter          # features\sprint2\01_rekomendasi_issue_serupa.feature:56
+    Given I am logged in as "maintainer.sprint2@example.test" with role "MAINTAINER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"              # FeatureContext::iAmAnActiveMember()
+    When I am on "/projects/1/submit"                                                # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should be denied project access                                           # FeatureContext::iShouldBeDeniedProjectAccess()
+
+  Scenario: Rekomendasi issue duplikat diarahkan ke issue induk                                                                                                 # features\sprint2\01_rekomendasi_issue_serupa.feature:62
+    Given I am logged in as "reporter.sprint2@example.test" with role "REPORTER"                                                                                # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "DupIssue Testing" with id "1"                                                                                         # FeatureContext::iAmAnActiveMember()
+    And I have a duplicate issue linked to its parent in my project                                                                                             # IssueRecommendationBddContext::iHaveDuplicateIssueLinkedToParent()
+    And I have an NLP candidate pointing to the duplicate issue                                                                                                 # IssueRecommendationBddContext::iHaveNlpCandidatePointingToDuplicate()
+    When I request pre-submit recommendations with title "Tombol bayar tidak merespons" and description "Saat checkout tombol bayar gagal memproses transaksi." # IssueRecommendationBddContext::iRequestPreSubmitRecommendations()
+    Then I should receive a recommendation linking to the original issue                                                                                        # IssueRecommendationBddContext::iShouldReceiveRecommendationLinkingToOriginal()
+    And I should find no new draft issue in the database                                                                                                        # IssueRecommendationBddContext::iShouldFindNoNewDraftIssue()
+
+Feature: Review & Validasi Duplikat Issue (REQ-05)
+  Sebagai Maintainer pemilik project
+  Saya ingin meninjau dan memvalidasi kandidat duplikat issue yang terdeteksi NLP
+  Agar daftar issue tetap bersih dan tidak redundan
+
+  Background:                                                                                     # features\sprint2\req-05-validasi-duplikat.feature:17
+    Given terdapat project "Proyek Alpha" milik Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::terdapatProjectMilikMaintainer()
+    And terdapat Reporter "budi@kel4.dev" yang aktif di project tersebut                          # DuplicateReviewBddContext::terdapatReporterYangAktif()
+    And terdapat Issue #1 "Bug Login" dengan detection_status "COMPLETED" dan vote_count 5        # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatusDanVotes()
+    And terdapat Issue #2 "Gagal Masuk Akun" dengan detection_status "COMPLETED" dan vote_count 2 # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatusDanVotes()
+    And terdapat DuplicateCandidate dengan similarity_score 0.885 antara Issue #1 dan Issue #2    # DuplicateReviewBddContext::terdapatDuplicateCandidate()
+
+  Scenario: Maintainer melihat daftar kandidat duplikat project    # features\sprint2\req-05-validasi-duplikat.feature:25
     Given saya login sebagai Maintainer "reza@kel4.dev"            # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
     Then saya melihat heading "Daftar Kandidat Duplikat"           # DuplicateReviewBddContext::sayaMelihatHeading()
     And saya melihat pasangan "Bug Login" dan "Gagal Masuk Akun"   # DuplicateReviewBddContext::sayaMelihatPasangan()
     And saya melihat skor kemiripan "88,50%"                       # DuplicateReviewBddContext::sayaMelihatSkorKemiripan()
 
-  Scenario: Maintainer melihat issue yang gagal dideteksi NLP                  # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:38
+  Scenario: Maintainer melihat issue yang gagal dideteksi NLP                  # features\sprint2\req-05-validasi-duplikat.feature:33
     Given terdapat Issue #3 "Issue Gagal NLP" dengan detection_status "FAILED" # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatus()
     And saya login sebagai Maintainer "reza@kel4.dev"                          # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya mengunjungi halaman "/projects/{project}/duplicates"             # DuplicateReviewBddContext::sayaMengunjungiHalaman()
     Then saya melihat "Issue Gagal NLP" di bagian "Issue Deteksi Gagal"        # DuplicateReviewBddContext::sayaMelihatDiBagian()
     And saya melihat tombol "Proses Ulang"                                     # DuplicateReviewBddContext::sayaMelihatTombol()
 
-  Scenario: Maintainer membuka halaman perbandingan dua issue                          # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:46
+  Scenario: Maintainer membuka halaman perbandingan dua issue                          # features\sprint2\req-05-validasi-duplikat.feature:41
     Given saya login sebagai Maintainer "reza@kel4.dev"                                # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya mengunjungi halaman compare untuk pasangan Issue #1 dan Issue #2         # DuplicateReviewBddContext::sayaMengunjungiHalamanCompare()
     Then saya melihat heading "Bandingkan Pasangan Issue"                              # DuplicateReviewBddContext::sayaMelihatHeading()
@@ -38,25 +105,25 @@ Feature: Review & Validasi Duplikat Issue (REQ-05)
     And saya melihat detail Issue #2 dengan "Vote: 2"                                  # DuplicateReviewBddContext::sayaMelihatDetailIssueDengan()
     And saya melihat rekomendasi "Disarankan — Vote Terbanyak (5 vs 2)" untuk Issue #1 # DuplicateReviewBddContext::sayaMelihatRekomendasiUntukIssue()
 
-  Scenario: Skor NLP hanya ditampilkan sebagai rekomendasi bukan keputusan otomatis  # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:55
+  Scenario: Skor NLP hanya ditampilkan sebagai rekomendasi bukan keputusan otomatis  # features\sprint2\req-05-validasi-duplikat.feature:50
     Given saya login sebagai Maintainer "reza@kel4.dev"                              # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya mengunjungi halaman compare untuk pasangan Issue #1 dan Issue #2       # DuplicateReviewBddContext::sayaMengunjungiHalamanCompare()
     Then saya melihat skor kemiripan "88.50" di halaman                              # DuplicateReviewBddContext::sayaMelihatSkorKemiripanDiHalaman()
     And status kandidat masih "PENDING" (belum otomatis DUPLICATE)                   # DuplicateReviewBddContext::statusKandidatMasihBelumOtomatis()
     And saya harus memilih "Konfirmasi Duplikat" atau "Bukan Duplikat" secara manual # DuplicateReviewBddContext::sayaHarusMemilihSecaraManual()
 
-  Scenario: Maintainer melihat aturan relasi duplikat di halaman perbandingan  # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:63
+  Scenario: Maintainer melihat aturan relasi duplikat di halaman perbandingan  # features\sprint2\req-05-validasi-duplikat.feature:58
     Given saya login sebagai Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya mengunjungi halaman compare untuk pasangan Issue #1 dan Issue #2 # DuplicateReviewBddContext::sayaMengunjungiHalamanCompare()
     Then saya melihat kotak "Aturan Relasi Duplikat"                           # DuplicateReviewBddContext::sayaMelihatKotak()
     And saya melihat kotak "Ringkasan Konsekuensi Status"                      # DuplicateReviewBddContext::sayaMelihatKotak()
 
-  Scenario: Sistem merekomendasikan issue dengan vote terbanyak sebagai induk # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:70
+  Scenario: Sistem merekomendasikan issue dengan vote terbanyak sebagai induk # features\sprint2\req-05-validasi-duplikat.feature:65
     Given saya login sebagai Maintainer "reza@kel4.dev"                       # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya mengunjungi halaman compare                                     # DuplicateReviewBddContext::sayaMengunjungiHalamanCompareDefault()
     Then Issue #1 (vote 5) ditandai "Disarankan — Vote Terbanyak"             # DuplicateReviewBddContext::issueVoteDitandai()
 
-  Scenario: Maintainer mengonfirmasi Issue #2 sebagai duplikat dari Issue #1 # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:76
+  Scenario: Maintainer mengonfirmasi Issue #2 sebagai duplikat dari Issue #1 # features\sprint2\req-05-validasi-duplikat.feature:71
     Given saya login sebagai Maintainer "reza@kel4.dev"                      # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     And Issue #1 berstatus "OPEN"                                            # DuplicateReviewBddContext::issueBerstatus()
     And Issue #2 berstatus "OPEN"                                            # DuplicateReviewBddContext::issueBerstatus()
@@ -65,28 +132,28 @@ Feature: Review & Validasi Duplikat Issue (REQ-05)
     And Issue #2 memiliki duplicate_of = Issue #1                            # DuplicateReviewBddContext::issueMemilikiDuplicateOf()
     And kandidat memiliki decision "DUPLICATE"                               # DuplicateReviewBddContext::kandidatMemilikiDecision()
 
-  Scenario: Anak langsung CLOSED jika induk sudah RESOLVED       # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:86
+  Scenario: Anak langsung CLOSED jika induk sudah RESOLVED       # features\sprint2\req-05-validasi-duplikat.feature:81
     Given saya login sebagai Maintainer "reza@kel4.dev"          # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     And Issue #1 berstatus "RESOLVED"                            # DuplicateReviewBddContext::issueBerstatus()
     When saya submit keputusan "DUPLICATE" dengan induk Issue #1 # DuplicateReviewBddContext::sayaSubmitKeputusan()
     Then Issue #2 berstatus "CLOSED"                             # DuplicateReviewBddContext::issueBerstatus()
     And Issue #2 memiliki duplicate_of = Issue #1                # DuplicateReviewBddContext::issueMemilikiDuplicateOf()
 
-  Scenario: Maintainer memutuskan bukan duplikat        # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:94
+  Scenario: Maintainer memutuskan bukan duplikat        # features\sprint2\req-05-validasi-duplikat.feature:89
     Given saya login sebagai Maintainer "reza@kel4.dev" # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit keputusan "NOT_DUPLICATE"          # DuplicateReviewBddContext::sayaSubmitKeputusanNotDuplicate()
     Then Issue #1 tetap "OPEN"                          # DuplicateReviewBddContext::issueTetapStatus()
     And Issue #2 tetap "OPEN"                           # DuplicateReviewBddContext::issueTetapStatus()
     And kandidat memiliki decision "NOT_DUPLICATE"      # DuplicateReviewBddContext::kandidatMemilikiDecision()
 
-  Scenario: Pembatalan penandaan duplikat ditolak tanpa alasan     # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:102
+  Scenario: Pembatalan penandaan duplikat ditolak tanpa alasan     # features\sprint2\req-05-validasi-duplikat.feature:97
     Given Issue #2 sudah berstatus "DUPLICATE" dari Issue #1       # DuplicateReviewBddContext::issueSudahBerstatusDari()
     And saya login sebagai Maintainer "reza@kel4.dev"              # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit pembatalan dengan reason kosong               # DuplicateReviewBddContext::sayaSubmitPembatalanDenganReasonKosong()
     Then saya mendapat error validasi "Alasan Koreksi wajib diisi" # DuplicateReviewBddContext::sayaMendapatErrorValidasi()
     And Issue #2 masih berstatus "DUPLICATE"                       # DuplicateReviewBddContext::issueMasihBerstatus()
 
-  Scenario: Pembatalan penandaan duplikat berhasil dengan alasan valid                                                   # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:109
+  Scenario: Pembatalan penandaan duplikat berhasil dengan alasan valid                                                   # features\sprint2\req-05-validasi-duplikat.feature:104
     Given Issue #2 sudah berstatus "DUPLICATE" dari Issue #1                                                             # DuplicateReviewBddContext::issueSudahBerstatusDari()
     And saya login sebagai Maintainer "reza@kel4.dev"                                                                    # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit pembatalan dengan reason "Setelah analisis lebih lanjut kedua issue memiliki akar masalah berbeda." # DuplicateReviewBddContext::sayaSubmitPembatalanDenganReason()
@@ -95,58 +162,122 @@ Feature: Review & Validasi Duplikat Issue (REQ-05)
     And kandidat kembali ke decision "PENDING"                                                                           # DuplicateReviewBddContext::kandidatKembaliKeDecision()
     And terdapat activity_log dengan action "DUPLICATE_CORRECTED"                                                        # DuplicateReviewBddContext::terdapatActivityLogDenganAction()
 
-  Scenario: Keputusan ditolak jika parent_issue_id bukan bagian dari pasangan # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:119
+  Scenario: Keputusan ditolak jika parent_issue_id bukan bagian dari pasangan # features\sprint2\req-05-validasi-duplikat.feature:114
     Given saya login sebagai Maintainer "reza@kel4.dev"                       # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit keputusan "DUPLICATE" dengan parent_issue_id = 99999     # DuplicateReviewBddContext::sayaSubmitKeputusanInvalidParent()
     Then respon status 422 (Unprocessable Entity)                             # DuplicateReviewBddContext::responStatusUnprocessableEntity()
 
-  Scenario: Keputusan ditolak jika calon induk sendiri adalah duplikat # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:125
+  Scenario: Keputusan ditolak jika calon induk sendiri adalah duplikat # features\sprint2\req-05-validasi-duplikat.feature:120
     Given Issue #1 sudah berstatus "DUPLICATE" (memiliki duplicate_of) # DuplicateReviewBddContext::issueSudahBerstatusMemilikiDuplicateOf()
     And saya login sebagai Maintainer "reza@kel4.dev"                  # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit keputusan "DUPLICATE" dengan induk Issue #1       # DuplicateReviewBddContext::sayaSubmitKeputusan()
     Then respon status 409 dengan pesan "Induk bukan duplikat"         # DuplicateReviewBddContext::responStatusDenganPesan()
 
-  Scenario: Keputusan ditolak jika akan membentuk siklus duplikat                           # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:132
+  Scenario: Keputusan ditolak jika akan membentuk siklus duplikat                           # features\sprint2\req-05-validasi-duplikat.feature:127
     Given Issue #2 sudah memiliki anak duplikat Issue #3                                    # DuplicateReviewBddContext::issueSudahMemilikiAnakDuplikat()
     And saya login sebagai Maintainer "reza@kel4.dev"                                       # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit keputusan "DUPLICATE" dengan induk Issue #1 (menjadikan Issue #2 anak) # DuplicateReviewBddContext::sayaSubmitKeputusanCycle()
     Then respon status 409 dengan pesan "Tidak membentuk siklus"                            # DuplicateReviewBddContext::responStatusDenganPesan()
 
-  Scenario: Maintainer memproses ulang issue gagal deteksi NLP             # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:139
+  Scenario: Maintainer memproses ulang issue gagal deteksi NLP             # features\sprint2\req-05-validasi-duplikat.feature:134
     Given terdapat Issue #3 "Issue Gagal" dengan detection_status "FAILED" # DuplicateReviewBddContext::terdapatIssueDenganDetectionStatus()
     And saya login sebagai Maintainer "reza@kel4.dev"                      # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya POST ke "/projects/{project}/issues/{issue}/detection/retry" # DuplicateReviewBddContext::sayaPostKe()
     Then Issue #3 berstatus "PENDING" (detection_status)                   # DuplicateReviewBddContext::issueBerstatusDetectionStatus()
     And job DetectIssueCandidatesJob di-dispatch                           # DuplicateReviewBddContext::jobDetectIssueCandidatesJobDiDispatch()
 
-  Scenario: Retry kedua ditolak jika status bukan FAILED (concurrency guard) # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:147
+  Scenario: Retry kedua ditolak jika status bukan FAILED (concurrency guard) # features\sprint2\req-05-validasi-duplikat.feature:142
     Given Issue #3 sudah di-retry dan sekarang berstatus "PENDING"           # DuplicateReviewBddContext::issueSudahDiRetry()
     And saya login sebagai Maintainer "reza@kel4.dev"                        # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya POST retry lagi                                                # DuplicateReviewBddContext::sayaPostRetryLagi()
     Then respon redirect dengan flash "status_notice"                        # DuplicateReviewBddContext::responRedirectDenganFlash()
     And tidak ada job baru yang di-dispatch                                  # DuplicateReviewBddContext::tidakAdaJobBaruDiDispatch()
 
-  Scenario: Setiap keputusan review tercatat di activity_logs                   # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:155
+  Scenario: Setiap keputusan review tercatat di activity_logs                   # features\sprint2\req-05-validasi-duplikat.feature:150
     Given saya login sebagai Maintainer "reza@kel4.dev"                         # DuplicateReviewBddContext::sayaLoginSebagaiMaintainer()
     When saya submit keputusan "NOT_DUPLICATE"                                  # DuplicateReviewBddContext::sayaSubmitKeputusanNotDuplicate()
     Then terdapat satu record di activity_logs dengan action "DUPLICATE_REVIEW" # DuplicateReviewBddContext::terdapatSatuRecordDiActivityLogs()
     And record tersebut memiliki user_id Maintainer dan project_id project      # DuplicateReviewBddContext::recordMemilikiUserIdDanProjectId()
 
-  Scenario: Reporter tidak dapat mengakses halaman duplikat        # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:162
+  Scenario: Reporter tidak dapat mengakses halaman duplikat        # features\sprint2\req-05-validasi-duplikat.feature:157
     Given saya login sebagai Reporter "budi@kel4.dev"              # DuplicateReviewBddContext::sayaLoginSebagaiReporter()
     When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
     Then respon status 403 (Forbidden)                             # DuplicateReviewBddContext::responStatusForbidden()
 
-  Scenario: Maintainer project lain tidak dapat mengakses duplikat # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:167
+  Scenario: Maintainer project lain tidak dapat mengakses duplikat # features\sprint2\req-05-validasi-duplikat.feature:162
     Given saya login sebagai Maintainer dari project lain          # DuplicateReviewBddContext::sayaLoginSebagaiMaintainerLain()
     When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
     Then respon status 403 (Forbidden)                             # DuplicateReviewBddContext::responStatusForbidden()
 
-  Scenario: Guest diarahkan ke halaman login                       # C:\laragon\www\DupIssue\docs\bdd\sprint2\req-05-validasi-duplikat.feature:172
+  Scenario: Guest diarahkan ke halaman login                       # features\sprint2\req-05-validasi-duplikat.feature:167
     Given saya tidak login                                         # DuplicateReviewBddContext::sayaTidakLogin()
     When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
     Then saya diarahkan ke "/login"                                # DuplicateReviewBddContext::sayaDiarahkanKe()
 
-20 scenarios (20 passed)
-191 steps (191 passed)
-0m17.86s (61.96Mb)
+@req02 @sprint2 @behat-mink
+Feature: Lihat Status Issue (read-only)
+  In order to memantau perkembangan issue dari project yang saya ikuti
+  As a Reporter
+  I want to mencari, memfilter, dan membaca status issue tanpa mengubah data
+
+  Background:                                                                   # features\sprint2\req02_lihat_status.feature:7
+    Given I am logged in as "reporter.req02@dupissue.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "REQ02 Testing" with id "1"            # FeatureContext::iAmAnActiveMember()
+
+  @req02_2 @req02_3 @req02_5
+  Scenario: Reporter mencari issue berdasarkan judul dan melihat detail      # features\sprint2\req02_lihat_status.feature:12
+    Given I have an existing issue "Bayar gagal pada checkout" in my project # FeatureContext::iHaveAnExistingIssue()
+    When I am on "/projects/1/issues"                                        # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should see "Daftar Issue"                                         # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    When I fill in "cari" with "Bayar"                                       # Soulcodex\Behat\Addon\RootContext::fillField()
+    And I select "Open" from "status"                                        # Soulcodex\Behat\Addon\RootContext::selectOption()
+    And I press "Cari"                                                       # Soulcodex\Behat\Addon\RootContext::pressButton()
+    Then I should see "Bayar gagal pada checkout"                            # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    When I follow "Lihat Detail"                                             # Soulcodex\Behat\Addon\RootContext::clickLink()
+    Then I should see "Riwayat perubahan status"                             # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    And I should see "Muat Ulang"                                            # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    And I should see "Jumlah vote"                                           # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+
+  @req02_4
+  Scenario: Pencarian tanpa hasil menampilkan reset filter                   # features\sprint2\req02_lihat_status.feature:26
+    Given I have an existing issue "Bayar gagal pada checkout" in my project # FeatureContext::iHaveAnExistingIssue()
+    When I am on "/projects/1/issues"                                        # Soulcodex\Behat\Addon\RootContext::visit()
+    And I fill in "cari" with "judul-tidak-ada"                              # Soulcodex\Behat\Addon\RootContext::fillField()
+    And I press "Cari"                                                       # Soulcodex\Behat\Addon\RootContext::pressButton()
+    Then I should see "Issue tidak tersedia"                                 # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    And I should see "Reset Filter"                                          # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    When I follow "Reset Filter"                                             # Soulcodex\Behat\Addon\RootContext::clickLink()
+    Then I should see "Bayar gagal pada checkout"                            # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+
+  @req02_6
+  Scenario: Reporter menelusuri issue induk dari issue duplikat         # features\sprint2\req02_lihat_status.feature:37
+    Given I have a duplicate issue and its original issue in my project # IssueStatusBddContext::iHaveDuplicateWithOriginal()
+    When I open the duplicate issue detail                              # IssueStatusBddContext::iOpenDuplicateDetail()
+    Then I should see "Issue Induk"                                     # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    When I follow "Issue Induk"                                         # Soulcodex\Behat\Addon\RootContext::clickLink()
+    Then I should see "Issue induk untuk REQ-02"                        # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+
+  @req02_7 @req02_10
+  Scenario: Refresh membaca status terbaru tanpa memodifikasi issue     # features\sprint2\req02_lihat_status.feature:45
+    Given I have an existing issue "Status yang dipantau" in my project # FeatureContext::iHaveAnExistingIssue()
+    When I request current issue status from the read-only API          # IssueStatusBddContext::iRequestCurrentStatus()
+    Then I should receive issue status "OPEN"                           # IssueStatusBddContext::iReceiveIssueStatus()
+    And the status refresh should not mutate the issue                  # IssueStatusBddContext::refreshShouldNotMutateIssue()
+
+  @req02_9
+  Scenario: Issue tidak ditemukan mengembalikan halaman aman # features\sprint2\req02_lihat_status.feature:52
+    When I am on "/projects/1/issues/999999"                 # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should see "Issue tidak tersedia"                 # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    And I should see "Kembali ke Daftar"                     # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+    When I follow "Kembali ke Daftar"                        # Soulcodex\Behat\Addon\RootContext::clickLink()
+    Then I should see "Daftar Issue"                         # Soulcodex\Behat\Addon\RootContext::assertPageContainsText()
+
+  @req02_1
+  Scenario: Reporter yang keanggotaannya nonaktif tidak dapat membaca issue # features\sprint2\req02_lihat_status.feature:60
+    Given I am not an active member of project "REQ02 Testing"              # FeatureContext::iAmNotAnActiveMember()
+    When I am on "/projects/1/issues"                                       # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should be denied project access                                  # FeatureContext::iShouldBeDeniedProjectAccess()
+
+34 scenarios (34 passed)
+285 steps (285 passed)
+0m25.74s (74.62Mb)

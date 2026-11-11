@@ -671,5 +671,207 @@ class DuplicateReviewCandidatesTest extends TestCase
             ->assertOk()
             ->assertDontSee('Review Kandidat Duplikat');
     }
+
+    public function test_req05_13_retry_nlp_preserves_manual_decisions_and_filters_invalid_candidates(): void
+    {
+        [$owner, $reporter, $project, $source] = $this->fixture();
+
+        $c1 = Issue::forceCreate([
+            'project_id' => $project->id,
+            'author_id' => $reporter->id,
+            'title' => 'Candidate 1',
+            'description' => 'Candidate 1 description',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'detection_status' => 'COMPLETED',
+        ]);
+        $c2 = Issue::forceCreate([
+            'project_id' => $project->id,
+            'author_id' => $reporter->id,
+            'title' => 'Candidate 2',
+            'description' => 'Candidate 2 description',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'detection_status' => 'COMPLETED',
+        ]);
+        $c3 = Issue::forceCreate([
+            'project_id' => $project->id,
+            'author_id' => $reporter->id,
+            'title' => 'Candidate 3',
+            'description' => 'Candidate 3 description',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'detection_status' => 'COMPLETED',
+        ]);
+
+        $otherProject = Project::factory()->create(['owner_id' => $owner->id]);
+        $foreignIssue = Issue::forceCreate([
+            'project_id' => $otherProject->id,
+            'author_id' => $reporter->id,
+            'title' => 'Foreign Issue',
+            'description' => 'Foreign description',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'detection_status' => 'COMPLETED',
+        ]);
+
+        // Existing manual decisions:
+        DuplicateCandidate::forceCreate([
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $c1->id,
+            'similarity_score' => 0.85,
+            'decision' => 'DUPLICATE',
+            'decided_by' => $owner->id,
+            'decided_at' => now(),
+        ]);
+        DuplicateCandidate::forceCreate([
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $c2->id,
+            'similarity_score' => 0.80,
+            'decision' => 'NOT_DUPLICATE',
+            'decided_by' => $owner->id,
+            'decided_at' => now(),
+        ]);
+        DuplicateCandidate::forceCreate([
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $c3->id,
+            'similarity_score' => 0.76,
+            'decision' => 'PENDING',
+        ]);
+
+        DB::table('issues')->where('id', $source->id)->update(['detection_status' => 'PENDING']);
+
+        $nlpClientMock = Mockery::mock(\App\Services\NlpClient::class);
+        $nlpClientMock->shouldReceive('candidates')
+            ->once()
+            ->andReturn([
+                'candidates' => [
+                    ['issue_id' => $c1->id, 'similarity' => 0.88],
+                    ['issue_id' => $c2->id, 'similarity' => 0.82],
+                    ['issue_id' => $c3->id, 'similarity' => 0.91],
+                    ['issue_id' => $foreignIssue->id, 'similarity' => 0.98], // foreign project -> must be filtered
+                    ['issue_id' => $source->id, 'similarity' => 1.0],       // self -> must be filtered
+                    ['issue_id' => 99999, 'similarity' => 0.95],             // non-existent -> must be filtered
+                    ['issue_id' => $c1->id, 'similarity' => 0.50],          // low score -> must be filtered
+                ],
+            ]);
+
+        $job = new DetectIssueCandidatesJob($source->id);
+        $job->handle($nlpClientMock);
+
+        // REQ-05.13 Assertions:
+        // 1. Manual decisions are PRESERVED
+        $pair1 = DuplicateCandidate::where('issue_id', $source->id)->where('candidate_issue_id', $c1->id)->first();
+        $this->assertNotNull($pair1);
+        $this->assertSame('DUPLICATE', $pair1->decision);
+
+        $pair2 = DuplicateCandidate::where('issue_id', $source->id)->where('candidate_issue_id', $c2->id)->first();
+        $this->assertNotNull($pair2);
+        $this->assertSame('NOT_DUPLICATE', $pair2->decision);
+
+        // 2. Unreviewed candidate updated
+        $pair3 = DuplicateCandidate::where('issue_id', $source->id)->where('candidate_issue_id', $c3->id)->first();
+        $this->assertNotNull($pair3);
+        $this->assertEqualsWithDelta(0.91, $pair3->similarity_score, 0.001);
+
+        // 3. Invalid candidates (foreign project, self, non-existent) are FILTERED
+        $this->assertFalse(DuplicateCandidate::where('issue_id', $source->id)->where('candidate_issue_id', $foreignIssue->id)->exists());
+        $this->assertFalse(DuplicateCandidate::where('issue_id', $source->id)->where('candidate_issue_id', $source->id)->exists());
+        $this->assertFalse(DuplicateCandidate::where('issue_id', $source->id)->where('candidate_issue_id', 99999)->exists());
+    }
+
+    public function test_req05_14_decision_transaction_failure_rolls_back_cleanly_and_shows_actionable_error(): void
+    {
+        [$owner, , $project, $source, $candidate, $pair] = $this->fixture();
+
+        // Simulate database exception during transaction (e.g. failing during activity log recording)
+        $tripped = false;
+        DB::beforeExecuting(function ($query, $bindings) use (&$tripped) {
+            if (! $tripped && str_contains(strtolower($query), 'insert into') && str_contains($query, 'activity_logs')) {
+                $tripped = true;
+                throw new \RuntimeException('Simulated disk/DB connection failure during transaction');
+            }
+        });
+
+        $url = route('issues.duplicates.decide', [
+            'project' => $project,
+            'issue' => $source,
+            'candidate' => $pair,
+        ]);
+
+        $response = $this->actingAs($owner)->from(route('projects.duplicates.index', ['project' => $project]))
+            ->post($url, [
+                'decision' => 'DUPLICATE',
+                'parent_issue_id' => $source->id,
+                'expected_decision' => 'PENDING',
+                'expected_source_status' => 'OPEN',
+                'expected_candidate_status' => 'OPEN',
+                'expected_source_parent' => 0,
+                'expected_candidate_parent' => 0,
+            ]);
+
+        // Actionable error message returned to user
+        $response->assertRedirect();
+        $response->assertSessionHas('error', 'Terjadi kesalahan sistem saat menyimpan keputusan validasi. Silakan muat ulang halaman dan coba lagi.');
+
+        // Assert atomic rollback: no changes persisted
+        $this->assertSame('OPEN', $candidate->fresh()->status);
+        $this->assertNull($candidate->fresh()->duplicate_of);
+        $this->assertSame('PENDING', $pair->fresh()->decision);
+        $this->assertSame(0, DB::table('activity_logs')->count());
+    }
+
+    public function test_compare_page_only_shows_history_for_the_specific_issue_pair(): void
+    {
+        [$owner, $reporter, $project, $source, $candidate, $pair] = $this->fixture();
+
+        $thirdIssue = Issue::forceCreate([
+            'project_id' => $project->id,
+            'author_id' => $reporter->id,
+            'title' => 'Issue Ketiga Lainnya',
+            'description' => 'Deskripsi issue ketiga',
+            'source_type' => 'FORM',
+            'status' => 'OPEN',
+            'vote_count' => 1,
+            'detection_status' => 'COMPLETED',
+        ]);
+
+        // Log 1: DUPLICATE_REVIEW strictly for pair ($source, $candidate)
+        DB::table('activity_logs')->insert([
+            'project_id' => $project->id,
+            'user_id' => $owner->id,
+            'issue_id' => $source->id,
+            'action' => 'DUPLICATE_REVIEW',
+            'old_values' => json_encode(['issue_id' => $source->id, 'candidate_issue_id' => $candidate->id, 'decision' => 'PENDING']),
+            'new_values' => json_encode(['issue_id' => $source->id, 'candidate_issue_id' => $candidate->id, 'decision' => 'NOT_DUPLICATE']),
+            'reason' => 'Keputusan valid untuk pasangan sumber-kandidat ini',
+            'created_at' => now()->subMinute(),
+            'updated_at' => now()->subMinute(),
+        ]);
+
+        // Log 2: DUPLICATE_REVIEW for a DIFFERENT pair ($source, $thirdIssue)
+        DB::table('activity_logs')->insert([
+            'project_id' => $project->id,
+            'user_id' => $owner->id,
+            'issue_id' => $source->id,
+            'action' => 'DUPLICATE_REVIEW',
+            'old_values' => json_encode(['issue_id' => $source->id, 'candidate_issue_id' => $thirdIssue->id, 'decision' => 'PENDING']),
+            'new_values' => json_encode(['issue_id' => $source->id, 'candidate_issue_id' => $thirdIssue->id, 'decision' => 'NOT_DUPLICATE']),
+            'reason' => 'Log untuk pasangan ketiga yang TIDAK boleh muncul di compare pasangan pertama',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $compareUrl = route('issues.duplicates.compare', [
+            'project' => $project,
+            'issue' => $source,
+            'candidate' => $pair,
+        ]);
+
+        $response = $this->actingAs($owner)->get($compareUrl);
+        $response->assertOk();
+        $response->assertSee('Keputusan valid untuk pasangan sumber-kandidat ini');
+        $response->assertDontSee('Log untuk pasangan ketiga yang TIDAK boleh muncul di compare pasangan pertama');
+    }
 }
 
