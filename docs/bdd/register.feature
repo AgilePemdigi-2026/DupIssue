@@ -1,10 +1,8 @@
-# DupIssue / Sprint 1 / Feature Register
-# Addendum skenario terhadap SRS: Register adalah Feature 1 pada Sprint Planning,
-# tetapi belum mempunyai User Story Scenario tersendiri pada SRS awal.
-# Format mengikuti Gherkin/Behat (Given / When / Then) yang dipakai SRS.
-# Skenario ini merupakan spesifikasi; keberhasilan eksekusi yang sudah ada
-# dibuktikan oleh tests/Feature/Auth/RegisterTest.php (Laravel Feature Test).
-# Skenario bertag @needs-steps memerlukan step definitions bila ingin dijalankan dengan Behat.
+# Skenario Register disusun berdasarkan Sprint Planning Sprint 1.
+# Skenario telah diimplementasikan sebagai BDD menggunakan Behat.
+# Step definitions: backend/features/bootstrap/FeatureContext.php
+# Bukti hasil pengujian: docs/testing/sprint-1/
+# Hasil pengujian: 7 scenarios passed, 39 steps passed.
 
 @register @sprint1
 Feature: Register Akun DupIssue
@@ -29,7 +27,6 @@ Feature: Register Akun DupIssue
     And I press "Daftar Akun"
     Then I should see "Registrasi berhasil! Akun Anda telah dibuat."
 
-  @needs-steps
   Scenario: Pendaftaran ditolak jika email sudah digunakan
     Given I have an existing account with email "reporter.test@example.com"
     When I fill in "name" with "Test Reporter Kedua"
@@ -50,19 +47,19 @@ Feature: Register Akun DupIssue
     Then I should see "The password field confirmation does not match."
     And I should not see "Registrasi berhasil! Akun Anda telah dibuat."
 
-  @needs-steps @backend
+  @backend
   Scenario: Backend menolak password yang kurang dari delapan karakter
     When I submit a registration request with a password shorter than 8 characters
     Then I should receive a password validation error
     And I should not have a new user account created
 
-  @needs-steps @backend
+  @backend
   Scenario: Backend menolak field registrasi yang wajib tetapi kosong
     When I submit a registration request without required fields
     Then I should receive validation errors for "name", "email" and "password"
     And I should not have a new user account created
 
-  @needs-steps @backend
+  @backend
   Scenario: Pengunjung tidak dapat menentukan role MAINTAINER sendiri
     When I submit valid registration data with role "MAINTAINER"
     Then I should have a new account with role "REPORTER"

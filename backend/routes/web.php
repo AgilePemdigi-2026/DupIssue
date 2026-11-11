@@ -1,12 +1,17 @@
 <?php
 
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\PasswordResetOtpController;
 use App\Http\Controllers\IssueController;
+use App\Http\Controllers\IssueRecommendationController;
 use App\Http\Controllers\DuplicateReviewController;
 use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
+use App\Models\Project;
+use App\Services\ProjectService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -44,14 +49,46 @@ Route::post('/register', [RegisterController::class, 'store'])
 
 Route::middleware('guest')->group(function () {
 
-    // Menampilkan halaman Login.
+    // LOGIN
     Route::get('/login', [LoginController::class, 'show'])
         ->name('login');
 
-    // Memproses Login dengan pembatasan percobaan.
     Route::post('/login', [LoginController::class, 'authenticate'])
         ->middleware('throttle:5,1')
         ->name('login.authenticate');
+    
+    // FORGOT PASSWORD - OTP
+
+    Route::get('/forgot-password',
+        [PasswordResetOtpController::class, 'requestForm'])
+        ->name('password.request');
+
+    Route::post('/forgot-password',
+        [PasswordResetOtpController::class, 'sendOtp'])
+        ->middleware('throttle:5,1')
+        ->name('password.otp.send');
+
+    // VERIFIKASI OTP
+
+    Route::get('/verify-otp',
+        [PasswordResetOtpController::class, 'verifyForm'])
+        ->name('password.otp.form');
+
+    Route::post('/verify-otp',
+        [PasswordResetOtpController::class, 'verifyOtp'])
+        ->middleware('throttle:10,1')
+        ->name('password.otp.verify');
+
+    // PASSWORD BARU
+
+    Route::get('/reset-password',
+        [PasswordResetOtpController::class, 'resetForm'])
+        ->name('password.reset.form');
+
+    Route::post('/reset-password',
+        [PasswordResetOtpController::class, 'update'])
+        ->middleware('throttle:5,1')
+        ->name('password.update');
 
 });
 
@@ -97,10 +134,33 @@ Route::middleware('auth')->group(function () {
     Route::post('/projects/{project}/submit', [IssueController::class, 'store'])
         ->middleware('role:REPORTER')
         ->name('issues.store');
+    Route::post('/projects/{project}/issues/recommendations', IssueRecommendationController::class)
+        ->middleware(['role:REPORTER', 'throttle:60,1'])
+        ->name('issues.recommendations');
     Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
         ->name('issues.index');
+
+    Route::get('/projects/{project}/issues/{issue}/status', [IssueController::class, 'readStatus'])
+        ->name('issues.status.read');
+
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
-        ->name('issues.show');
+        ->name('issues.show')
+        ->missing(static function (Request $request) {
+            $project = $request->route('project');
+            if (! $project instanceof Project) {
+                abort(404);
+            }
+
+            // Do not reveal whether an issue exists to unauthorised users.
+            $user = $request->user();
+            abort_unless($user && app(ProjectService::class)->canAccessProject($user, $project),
+                403, 'Akses tidak tersedia');
+            if ($user->role === 'REPORTER') {
+                abort_unless($project->memberships()->where('user_id', $user->id)
+                    ->where('is_active', true)->exists(), 403, 'Akses tidak tersedia');
+            }
+            return response()->view('issues.not-found', compact('project'), 404);
+        });
     Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
         [DuplicateReviewController::class, 'decide'])
         ->middleware('role:MAINTAINER')
