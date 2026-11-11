@@ -12,7 +12,8 @@
         if (!section || !refresh || !retry || !feedback || !stale || !history) return;
 
         const url = section.dataset.readUrl;
-        if (!url) return;
+        const initialParentRelation = section.dataset.parentRelation;
+        if (!url || typeof initialParentRelation !== "string") return;
         let inFlight = false;
 
         function renderHistory(items) {
@@ -31,8 +32,10 @@
                 const entry = document.createElement("li");
                 entry.className = "list-group-item";
                 const action = document.createElement("strong");
-                action.textContent = item.action;
-                entry.append(action, document.createTextNode(` · ${String(item.created_at ?? "")}`));
+                action.textContent = typeof item.from_status === "string" &&
+                    typeof item.to_status === "string"
+                    ? `${item.from_status} → ${item.to_status}` : item.action;
+                entry.append(action, document.createTextNode(` · ${String(item.created_at ?? "")} · ${item.action}`));
                 if (item.reason) {
                     const reason = document.createElement("p");
                     reason.className = "mb-0";
@@ -66,8 +69,15 @@
                 if (typeof data.status !== "string" ||
                     typeof data.detection_status !== "string" ||
                     !Number.isSafeInteger(data.vote_count) ||
+                    typeof data.parent_relation !== "string" ||
                     !Array.isArray(data.history)) {
                     throw new Error("Invalid status payload");
+                }
+                // Reload the complete page if the duplicate-parent relationship changed.
+                // This also synchronizes all conditional Maintainer controls.
+                if (data.parent_relation !== initialParentRelation) {
+                    window.location.reload();
+                    return;
                 }
                 // Build/validate the history before updating the view so malformed
                 // responses do not leave half-updated status fields.

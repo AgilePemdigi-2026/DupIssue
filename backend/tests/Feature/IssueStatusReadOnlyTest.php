@@ -229,6 +229,63 @@ class IssueStatusReadOnlyTest extends TestCase
         ]))->assertNotFound();
     }
 
+    public function test_history_shows_transition_in_html_and_refresh_api(): void
+    {
+        [$project, $reporter] = $this->setupReporter();
+        $issue = $this->makeIssue($project, 'Perubahan status', ['status' => 'IN_PROGRESS']);
+        DB::table('activity_logs')->insert([
+            'project_id' => $project->id,
+            'user_id' => $project->owner_id,
+            'issue_id' => $issue->id,
+            'action' => 'ISSUE_STATUS_CHANGED',
+            'old_values' => json_encode(['status' => 'OPEN']),
+            'new_values' => json_encode(['status' => 'IN_PROGRESS']),
+            'reason' => 'Mulai investigasi',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->actingAs($reporter)->get($this->detailUrl($project, $issue))
+            ->assertOk()->assertSee('Riwayat perubahan status')
+            ->assertSee('OPEN → IN_PROGRESS')->assertSee('Mulai investigasi');
+        $this->getJson(route('issues.status.read', ['project' => $project, 'issue' => $issue]))
+            ->assertOk()->assertJsonPath('history.0.from_status', 'OPEN')
+            ->assertJsonPath('history.0.to_status', 'IN_PROGRESS')
+            ->assertJsonPath('history.0.reason', 'Mulai investigasi')
+            ->assertJsonPath('parent_relation', 'none');
+    }
+
+    public function test_refresh_reports_changes_to_parent_relation_without_leaking_foreign_project(): void
+    {
+        [$project, $reporter] = $this->setupReporter();
+        $parent = $this->makeIssue($project, 'Induk asli');
+        $child = $this->makeIssue($project, 'Issue anak', ['status' => 'OPEN']);
+        $url = route('issues.status.read', ['project' => $project, 'issue' => $child]);
+        $this->actingAs($reporter)->getJson($url)
+            ->assertOk()->assertJsonPath('parent_relation', 'none');
+        $child->forceFill(['status' => 'DUPLICATE', 'duplicate_of' => $parent->id])->save();
+        $this->getJson($url)->assertOk()
+            ->assertJsonPath('status', 'DUPLICATE')
+            ->assertJsonPath('parent_relation', 'valid:'.$parent->id);
+        $other = Project::factory()->create();
+        $foreignParent = $this->makeIssue($other, 'Induk project lain');
+        $child->forceFill(['duplicate_of' => $foreignParent->id])->save();
+        $this->getJson($url)->assertOk()
+            ->assertJsonPath('parent_relation', 'invalid')
+            ->assertDontSee('Induk project lain');
+    }
+
+    public function test_index_renders_master_cluster_and_duplicate_relation(): void
+    {
+        [$project, $reporter] = $this->setupReporter();
+        $parent = $this->makeIssue($project, 'Issue master');
+        $this->makeIssue($project, 'Issue duplikat', [
+            'status' => 'DUPLICATE', 'duplicate_of' => $parent->id,
+        ]);
+        $this->actingAs($reporter)->get($this->indexUrl($project))
+            ->assertOk()->assertSee('Master Cluster')
+            ->assertSee('Duplikat dari')
+            ->assertSee('duplikat terhubung');
+    }
+
     public function test_refresh_endpoint_only_allows_read_requests(): void
     {
         [$project, $reporter] = $this->setupReporter();

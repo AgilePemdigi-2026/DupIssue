@@ -71,7 +71,27 @@
                         @foreach ($issues as $issue)
                             <tr>
                                 <td>#{{ $issue->id }}</td>
-                                <td>{{ $issue->title }}</td>
+                                <td>
+                                    @if ($issue->duplicate_of !== null)
+                                        <s class="text-muted">{{ $issue->title }}</s>
+                                        <div class="small mt-1">
+                                            @if ($issue->parentIssue)
+                                                Duplikat dari
+                                                <a href="{{ route('issues.show', ['project' => $project, 'issue' => $issue->parentIssue]) }}">#{{ $issue->parentIssue->id }}</a>
+                                            @else
+                                                <span class="text-warning">Issue induk tidak tersedia</span>
+                                            @endif
+                                        </div>
+                                    @else
+                                        {{ $issue->title }}
+                                        @if ($issue->duplicate_count > 0)
+                                            <div class="mt-1">
+                                                <span class="badge text-bg-info">Master Cluster</span>
+                                                <small class="text-muted">{{ $issue->duplicate_count }} duplikat terhubung</small>
+                                            </div>
+                                        @endif
+                                    @endif
+                                </td>
                                 <td>{{ $issue->status }}</td>
                                 <td>{{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</td>
                                 <td>{{ (int) $issue->vote_count }}</td>

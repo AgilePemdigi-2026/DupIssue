@@ -127,6 +127,10 @@ class IssueController extends Controller
 
         $issues = Issue::query()
             ->where('project_id', $project->getKey())
+            ->with(['parentIssue' => static fn ($query) => $query
+                ->where('project_id', $project->getKey())])
+            ->withCount(['childDuplicates as duplicate_count' => static fn ($query) => $query
+                ->where('project_id', $project->getKey())])
             ->when($cari !== '', static function ($query) use ($cari): void {
                 $query->where(static function ($nested) use ($cari): void {
                     $nested->where('title', 'like', '%'.$cari.'%')
@@ -178,12 +182,34 @@ class IssueController extends Controller
                 ->orderByDesc('id')->limit(20)->get();
         }
 
-        $statusHistory = DB::table('activity_logs')
-            ->where('project_id', $project->id)->where('issue_id', $issue->id)
-            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
-            ->orderByDesc('id')->limit(20)->get();
+        $statusHistory = $this->statusHistory($project, $issue);
 
         return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory', 'parentIssue'));
+    }
+
+    /** Read-only, project-scoped status transitions for HTML and JSON. */
+    private function statusHistory(Project $project, Issue $issue): \Illuminate\Support\Collection
+    {
+        return DB::table('activity_logs')
+            ->where('project_id', $project->getKey())
+            ->where('issue_id', $issue->getKey())
+            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
+            ->orderByDesc('id')
+            ->limit(20)
+            ->get(['action', 'created_at', 'reason', 'old_values', 'new_values'])
+            ->map(static function (object $event): object {
+                $before = json_decode((string) ($event->old_values ?? '{}'), true);
+                $after = json_decode((string) ($event->new_values ?? '{}'), true);
+                return (object) [
+                    'action' => $event->action,
+                    'created_at' => $event->created_at,
+                    'reason' => $event->reason,
+                    'from_status' => is_array($before) && is_string($before['status'] ?? null)
+                        ? $before['status'] : null,
+                    'to_status' => is_array($after) && is_string($after['status'] ?? null)
+                        ? $after['status'] : null,
+                ];
+            });
     }
 
     /**
@@ -202,13 +228,15 @@ class IssueController extends Controller
             return response()->json(['message' => 'Issue tidak tersedia'], 404);
         }
 
-        $statusHistory = DB::table('activity_logs')
+        $statusHistory = $this->statusHistory($project, $issue);
+
+        // Never send the ID of a foreign-project parent through the refresh API.
+        $parent = $issue->duplicate_of === null ? null : Issue::query()
+            ->whereKey($issue->duplicate_of)
             ->where('project_id', $project->getKey())
-            ->where('issue_id', $issue->getKey())
-            ->whereIn('action', ['ISSUE_STATUS_CHANGED', 'DUPLICATE_AUTO_CLOSED'])
-            ->orderByDesc('id')
-            ->limit(20)
-            ->get(['action', 'created_at', 'reason']);
+            ->first();
+        $parentRelation = $issue->duplicate_of === null
+            ? 'none' : ($parent ? 'valid:'.$parent->getKey() : 'invalid');
 
         return response()->json([
             'issue_id' => (int) $issue->getKey(),
@@ -216,6 +244,7 @@ class IssueController extends Controller
             'detection_status' => $issue->detection_status,
             'vote_count' => (int) $issue->vote_count,
             'updated_at' => $issue->updated_at?->toIso8601String(),
+            'parent_relation' => $parentRelation,
             'history' => $statusHistory,
         ]);
     }

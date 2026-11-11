@@ -12,7 +12,8 @@
         <p class="text-muted">Project: {{ $project->name }}</p>
         <p>{{ $issue->description }}</p>
         <section id="issue-status-detail"
-                 data-read-url="{{ route('issues.status.read', ['project' => $project, 'issue' => $issue]) }}">
+                 data-read-url="{{ route('issues.status.read', ['project' => $project, 'issue' => $issue]) }}"
+                 data-parent-relation="{{ $issue->duplicate_of === null ? 'none' : ($parentIssue ? 'valid:'.$parentIssue->id : 'invalid') }}">
             <p><strong>Status:</strong> <span id="issue-status-value">{{ $issue->status }}</span></p>
             <p><strong>Status deteksi NLP:</strong> <span id="issue-detection-status-value">{{ $issue->detection_status }}</span></p>
             <p><strong>Asal data:</strong> {{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</p>
@@ -152,12 +153,19 @@
             </ul>
         @endif
         <section id="issue-status-history" aria-label="Riwayat perubahan status">
-            <h2 class="h6 mt-4">Riwayat Status</h2>
+            <h2 class="h6 mt-4">Riwayat perubahan status</h2>
             <ul class="list-group mb-3" id="issue-status-history-list">
                 @forelse ($statusHistory as $entry)
                     <li class="list-group-item">
-                        <strong>{{ $entry->action }}</strong> · {{ $entry->created_at }}
-                        @if ($entry->reason)<p class="mb-0">{{ $entry->reason }}</p>@endif
+                        <strong>
+                            @if ($entry->from_status && $entry->to_status)
+                                {{ $entry->from_status }} → {{ $entry->to_status }}
+                            @else
+                                {{ $entry->action }}
+                            @endif
+                        </strong>
+                        <span class="text-muted small"> · {{ $entry->created_at }} · {{ $entry->action }}</span>
+                        @if ($entry->reason)<p class="mb-0">Alasan: {{ $entry->reason }}</p>@endif
                     </li>
                 @empty
                     <li class="list-group-item text-muted">Belum ada riwayat perubahan status.</li>
