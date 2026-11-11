@@ -1,3 +1,6 @@
+Command exited with code 0.
+
+Command output:
 Feature: Rekomendasi Issue Serupa sebelum Submit Issue
   Sebagai Reporter yang menjadi anggota aktif project
   Saya ingin melihat rekomendasi issue serupa sebelum mengirim laporan
@@ -214,6 +217,59 @@ Feature: Review & Validasi Duplikat Issue (REQ-05)
     When saya mengunjungi halaman "/projects/{project}/duplicates" # DuplicateReviewBddContext::sayaMengunjungiHalaman()
     Then saya diarahkan ke "/login"                                # DuplicateReviewBddContext::sayaDiarahkanKe()
 
+@vote @sprint2 @req01
+Feature: Reporter memberi dan membatalkan Vote pada issue
+  Sebagai Reporter yang menjadi anggota aktif suatu project
+  Saya ingin Vote dan Unvote tanpa menggandakan jumlah suara
+  Agar dukungan atas issue tercatat dan dapat diaudit
+
+  Background:                                                                  # features\sprint2\req01_vote_issue.feature:7
+    Given I am logged in as "reporter.vote@dupissue.test" with role "REPORTER" # FeatureContext::iAmLoggedInAs()
+    And I am an active member of project "Sprint 2 Voting" with id "1"         # FeatureContext::iAmAnActiveMember()
+
+  @vote_ui @vote_audit
+  Scenario: Reporter melakukan Vote dari detail issue dan aktivitas dicatat # features\sprint2\req01_vote_issue.feature:12
+    Given I have an open issue for voting                                   # VoteBddContext::iHaveOpenIssueForVoting()
+    When I open the voting issue detail                                     # VoteBddContext::iOpenVotingIssueDetail()
+    Then the Issue Status refresh controls should remain available          # VoteBddContext::statusControlsRemainAvailable()
+    When I submit Vote using the issue form                                 # VoteBddContext::iSubmitVoteUsingIssueForm()
+    Then the voting target should have 1 vote                               # VoteBddContext::votingTargetShouldHaveSingular()
+    And the voting audit should contain exactly one "VOTE_ADDED" event      # VoteBddContext::votingAuditShouldContainOne()
+
+  @unvote_ui @vote_audit
+  Scenario: Reporter membatalkan Vote melalui form dan jumlah suara kembali nol # features\sprint2\req01_vote_issue.feature:21
+    Given I have an open issue for voting                                       # VoteBddContext::iHaveOpenIssueForVoting()
+    When I open the voting issue detail                                         # VoteBddContext::iOpenVotingIssueDetail()
+    And I submit Vote using the issue form                                      # VoteBddContext::iSubmitVoteUsingIssueForm()
+    And I submit Unvote using the issue form                                    # VoteBddContext::iSubmitUnvoteUsingIssueForm()
+    Then the voting target should have 0 votes                                  # VoteBddContext::votingTargetShouldHave()
+    And the voting audit should contain exactly one "VOTE_ADDED" event          # VoteBddContext::votingAuditShouldContainOne()
+    And the voting audit should contain exactly one "VOTE_REMOVED" event        # VoteBddContext::votingAuditShouldContainOne()
+
+  @closed_duplicate
+  Scenario: Vote pada child CLOSED tersimpan pada induk sah             # features\sprint2\req01_vote_issue.feature:31
+    Given I have a CLOSED duplicate child and its original voting issue # VoteBddContext::iHaveClosedDuplicateForVoting()
+    When I open the voting issue detail                                 # VoteBddContext::iOpenVotingIssueDetail()
+    And I submit Vote using the issue form                              # VoteBddContext::iSubmitVoteUsingIssueForm()
+    Then I should be redirected to the original voting issue            # VoteBddContext::iShouldBeRedirectedToOriginalIssue()
+    And the voting target should have 1 vote                            # VoteBddContext::votingTargetShouldHaveSingular()
+    And the duplicate child should have zero votes                      # VoteBddContext::duplicateChildShouldHaveZeroVotes()
+    And the voting audit should contain exactly one "VOTE_ADDED" event  # VoteBddContext::votingAuditShouldContainOne()
+
+  @project_isolation
+  Scenario: Child dengan induk lintas project tidak membuka akses Voting        # features\sprint2\req01_vote_issue.feature:41
+    Given I have a duplicate issue linked to a foreign-project issue for voting # VoteBddContext::iHaveForeignParentForVoting()
+    When I open the voting issue detail                                         # VoteBddContext::iOpenVotingIssueDetail()
+    Then voting controls must be hidden                                         # VoteBddContext::votingControlsMustBeHidden()
+    And the foreign issue detail must not be disclosed                          # VoteBddContext::foreignIssueDetailMustNotBeDisclosed()
+
+  @inactive_membership
+  Scenario: Reporter yang keanggotaannya tidak aktif tidak dapat mengakses Voting # features\sprint2\req01_vote_issue.feature:48
+    Given I have an open issue for voting                                         # VoteBddContext::iHaveOpenIssueForVoting()
+    And I am not an active member of project "Sprint 2 Voting"                    # FeatureContext::iAmNotAnActiveMember()
+    When I am on "/projects/1/issues"                                             # Soulcodex\Behat\Addon\RootContext::visit()
+    Then I should be denied project access                                        # FeatureContext::iShouldBeDeniedProjectAccess()
+
 @req02 @sprint2 @behat-mink
 Feature: Lihat Status Issue (read-only)
   In order to memantau perkembangan issue dari project yang saya ikuti
@@ -278,6 +334,6 @@ Feature: Lihat Status Issue (read-only)
     When I am on "/projects/1/issues"                                       # Soulcodex\Behat\Addon\RootContext::visit()
     Then I should be denied project access                                  # FeatureContext::iShouldBeDeniedProjectAccess()
 
-34 scenarios (34 passed)
-285 steps (285 passed)
-0m25.74s (74.62Mb)
+39 scenarios (39 passed)
+323 steps (323 passed)
+0m27.77s (77.97Mb)

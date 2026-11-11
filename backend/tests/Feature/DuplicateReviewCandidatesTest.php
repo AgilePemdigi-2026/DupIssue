@@ -873,5 +873,117 @@ class DuplicateReviewCandidatesTest extends TestCase
         $response->assertSee('Keputusan valid untuk pasangan sumber-kandidat ini');
         $response->assertDontSee('Log untuk pasangan ketiga yang TIDAK boleh muncul di compare pasangan pertama');
     }
+
+    /**
+     * Integrasi penuh Voting (PR #37) dan Duplicate Review (PR #38):
+     * 1. Reporter aktif melakukan Vote dan Unvote pada issues.
+     * 2. Jumlah vote_count terbarui dengan benar.
+     * 3. Maintainer membuka halaman compare: rekomendasi induk otomatis berdasar vote_count tertinggi.
+     * 4. Maintainer memutuskan DUPLICATE: child berstatus DUPLICATE, duplicate_of diset, candidate decision tersimpan, activity log tercatat.
+     * 5. Voting setelah DUPLICATE: vote pada child issue dialihkan otomatis ke parent issue.
+     * 6. Unvote pada child issue mengurangi vote pada parent issue tanpa menduplikasi data atau merusak status.
+     */
+    public function test_voting_and_duplicate_review_full_cross_feature_integration(): void
+    {
+        [$owner, $reporter, $project, $source, $candidate, $pair] = $this->fixture();
+
+        // 1 & 2: Reporter voting awal
+        // Awalnya reset vote_count via forceFill karena vote_count server-controlled (bukan fillable)
+        $source->forceFill(['vote_count' => 0])->save();
+        $candidate->forceFill(['vote_count' => 0])->save();
+
+        // Reporter memberi vote ke source
+        $this->actingAs($reporter)->post(route('issues.vote', [
+            'project' => $project,
+            'issue' => $source,
+        ]))->assertRedirect();
+
+        $this->assertSame(1, (int) $source->fresh()->vote_count);
+        $this->assertSame(0, (int) $candidate->fresh()->vote_count);
+
+        // Tambah reporter kedua untuk memberi 2 votes ke candidate
+        $reporter2 = User::factory()->create(['role' => 'REPORTER']);
+        Membership::create(['project_id' => $project->id, 'user_id' => $reporter2->id, 'is_active' => true]);
+
+        $reporter3 = User::factory()->create(['role' => 'REPORTER']);
+        Membership::create(['project_id' => $project->id, 'user_id' => $reporter3->id, 'is_active' => true]);
+
+        $this->actingAs($reporter2)->post(route('issues.vote', ['project' => $project, 'issue' => $candidate]));
+        $this->actingAs($reporter3)->post(route('issues.vote', ['project' => $project, 'issue' => $candidate]));
+
+        $this->assertSame(1, (int) $source->fresh()->vote_count);
+        $this->assertSame(2, (int) $candidate->fresh()->vote_count);
+
+        // 3 & 4: Maintainer buka compare page: candidate (vote=2) harus direkomendasikan sbg parent dibanding source (vote=1)
+        $compareUrl = route('issues.duplicates.compare', [
+            'project' => $project,
+            'issue' => $source,
+            'candidate' => $pair,
+        ]);
+        $compareResp = $this->actingAs($owner)->get($compareUrl);
+        $compareResp->assertOk();
+        $compareResp->assertSee('Disarankan — Vote Terbanyak (2 vs 1)');
+
+        // 5 & 6: Maintainer konfirmasi DUPLICATE dengan parent = candidate (id kandidat)
+        $decideUrl = route('issues.duplicates.decide', [
+            'project' => $project,
+            'issue' => $source,
+            'candidate' => $pair,
+        ]);
+        $decideResp = $this->actingAs($owner)->post($decideUrl, [
+            'decision' => 'DUPLICATE',
+            'parent_issue_id' => $candidate->id,
+            'expected_decision' => 'PENDING',
+            'expected_source_status' => 'OPEN',
+            'expected_candidate_status' => 'OPEN',
+            'expected_source_parent' => 0,
+            'expected_candidate_parent' => 0,
+        ]);
+        $decideResp->assertRedirect();
+
+        $sourceFresh = $source->fresh();
+        $candidateFresh = $candidate->fresh();
+        $this->assertSame('DUPLICATE', $sourceFresh->status);
+        $this->assertSame($candidate->id, $sourceFresh->duplicate_of);
+        $this->assertSame('DUPLICATE', $pair->fresh()->decision);
+        $this->assertDatabaseHas('activity_logs', [
+            'project_id' => $project->id,
+            'issue_id' => $source->id,
+            'action' => 'DUPLICATE_REVIEW',
+        ]);
+
+        // 7: Vote pada child issue (source) dialihkan ke parent (candidate)
+        // Buat reporter baru (reporter4) yang belum pernah vote di parent
+        $reporter4 = User::factory()->create(['role' => 'REPORTER']);
+        Membership::create(['project_id' => $project->id, 'user_id' => $reporter4->id, 'is_active' => true]);
+
+        $childVoteResp = $this->actingAs($reporter4)->post(route('issues.vote', [
+            'project' => $project,
+            'issue' => $sourceFresh,
+        ]));
+        $childVoteResp->assertRedirect();
+
+        // Vote harus tersimpan di parent, bukan child
+        $this->assertSame(3, (int) $candidateFresh->fresh()->vote_count);
+        $this->assertSame(1, (int) $sourceFresh->fresh()->vote_count); // tetap tidak bertambah
+        $this->assertDatabaseHas('votes', [
+            'issue_id' => $candidate->id,
+            'voter_id' => $reporter4->id,
+        ]);
+
+        // 8: Unvote pada child issue menghapus vote dari parent
+        $childUnvoteResp = $this->actingAs($reporter4)->delete(route('issues.unvote', [
+            'project' => $project,
+            'issue' => $sourceFresh,
+        ]));
+        $childUnvoteResp->assertRedirect();
+
+        $this->assertSame(2, (int) $candidateFresh->fresh()->vote_count);
+        $this->assertSame(1, (int) $sourceFresh->fresh()->vote_count);
+        $this->assertDatabaseMissing('votes', [
+            'issue_id' => $candidate->id,
+            'voter_id' => $reporter4->id,
+        ]);
+    }
 }
 
