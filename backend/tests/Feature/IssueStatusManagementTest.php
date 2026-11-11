@@ -86,7 +86,7 @@ class IssueStatusManagementTest extends TestCase
         ]);
         $this->assertDatabaseCount('activity_logs', 1);
         $this->actingAs($r)->get(route('issues.show', ['project' => $p, 'issue' => $issue]))
-            ->assertOk()->assertSee('Riwayat Status')->assertDontSee('Simpan Status');
+            ->assertOk()->assertSee('Riwayat perubahan status')->assertDontSee('Simpan Status');
     }
 
     public function test_same_status_is_no_op_with_no_log(): void
