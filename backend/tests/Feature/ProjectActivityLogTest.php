@@ -453,6 +453,7 @@ class ProjectActivityLogTest extends TestCase
     {
         $maintainer = User::factory()->create(['role' => 'MAINTAINER']);
         $service = app(ProjectService::class);
+        $initialTxLevel = DB::transactionLevel();
 
         // Pre-existing project to test duplicate validation
         $existing = Project::factory()->create(['name' => 'Existing Unique Project']);
@@ -482,7 +483,8 @@ class ProjectActivityLogTest extends TestCase
             // expected
         }
 
-        // Verify no new projects and no activity logs were created
+        // Verify no new projects and no activity logs were created, and no open transactions
+        $this->assertSame($initialTxLevel, DB::transactionLevel(), 'Transaction must not be left open on validation failure');
         $this->assertSame($initialProjectsCount, Project::count());
         $this->assertDatabaseMissing('projects', ['name' => 'ab']);
         $this->assertDatabaseCount('activity_logs', 0);
@@ -493,6 +495,7 @@ class ProjectActivityLogTest extends TestCase
         [$owner, , $project] = $this->fixture();
         $otherProject = Project::factory()->create(['name' => 'Another Project']);
         $service = app(ProjectService::class);
+        $initialTxLevel = DB::transactionLevel();
 
         $originalName = $project->name;
         $originalDesc = $project->description;
@@ -521,7 +524,8 @@ class ProjectActivityLogTest extends TestCase
             // expected
         }
 
-        // Verify project data was NOT modified and NO activity logs were created
+        // Verify project data was NOT modified and NO activity logs were created, and no open transactions
+        $this->assertSame($initialTxLevel, DB::transactionLevel(), 'Transaction must not be left open on validation failure');
         $fresh = $project->fresh();
         $this->assertSame($originalName, $fresh->name);
         $this->assertSame($originalDesc, $fresh->description);

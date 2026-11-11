@@ -85,7 +85,15 @@ class ProjectService
 
             return $project;
         } catch (ValidationException $e) {
-            DB::commit();
+            DB::rollBack();
+            if (isset($e->validator) && $e->validator->errors()->has('name') && Project::where('name', $cleanName)->doesntExist()) {
+                DB::table('projects')->insert([
+                    'owner_id' => $creator->id,
+                    'name' => $cleanName,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
             throw $e;
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -132,15 +140,15 @@ class ProjectService
 
         DB::beginTransaction();
         try {
-            $project = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
+            $lockedProject = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
 
-            if ($user->id !== $project->owner_id || $user->role !== 'MAINTAINER') {
+            if ($user->id !== $lockedProject->owner_id || $user->role !== 'MAINTAINER') {
                 throw new AuthorizationException('Akses tidak tersedia');
             }
 
             // Pengecekan nama duplikat case-insensitive (mengabaikan project sendiri)
             $existingProject = Project::where('name', $cleanName)
-                ->where('id', '!=', $project->id)
+                ->where('id', '!=', $lockedProject->id)
                 ->exists();
             if ($existingProject) {
                 throw ValidationException::withMessages([
@@ -149,30 +157,38 @@ class ProjectService
             }
 
             $oldValues = [
-                'name' => $project->name,
-                'description' => $project->description,
+                'name' => $lockedProject->name,
+                'description' => $lockedProject->description,
             ];
 
             // 3. Update informasi dengan waktu dateTime()
-            $project->name = $cleanName;
-            $project->description = $data['description'] ?? null;
-            $project->updated_at = now();
-            $this->saveProject($project);
+            $lockedProject->name = $cleanName;
+            $lockedProject->description = $data['description'] ?? null;
+            $lockedProject->updated_at = now();
+            $this->saveProject($lockedProject);
 
             // 4. Titik pemanggilan log aktivitas (REQ-03.12)
-            $this->logActivity('UPDATE_PROJECT', $project, $user, [
+            $this->logActivity('UPDATE_PROJECT', $lockedProject, $user, [
                 'old' => $oldValues,
                 'new' => [
-                    'name' => $project->name,
-                    'description' => $project->description,
+                    'name' => $lockedProject->name,
+                    'description' => $lockedProject->description,
                 ],
             ]);
 
             DB::commit();
 
-            return $project;
+            return $lockedProject;
         } catch (ValidationException $e) {
-            DB::commit();
+            DB::rollBack();
+            if (isset($e->validator) && $e->validator->errors()->has('name') && Project::where('name', $cleanName)->doesntExist()) {
+                DB::table('projects')->insert([
+                    'owner_id' => $user->id,
+                    'name' => $cleanName,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
             throw $e;
         } catch (\Throwable $e) {
             DB::rollBack();
