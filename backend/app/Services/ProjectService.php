@@ -51,31 +51,37 @@ class ProjectService
             throw new ValidationException($validator);
         }
 
-        // Validasi keunikan nama project secara case-insensitive (panduan final)
         $cleanName = trim($data['name']);
-        $existingProject = Project::where('name', $cleanName)->exists();
-        if ($existingProject) {
-            throw ValidationException::withMessages([
-                'name' => 'Nama sudah digunakan',
+
+        return DB::transaction(function () use ($creator, $cleanName, $data) {
+            // Validasi keunikan nama project secara case-insensitive (panduan final)
+            $existingProject = Project::where('name', $cleanName)->exists();
+            if ($existingProject) {
+                throw ValidationException::withMessages([
+                    'name' => 'Nama sudah digunakan',
+                ]);
+            }
+
+            // 3. Simpan project dengan owner_id dari server dan waktu dateTime()
+            $project = new Project([
+                'name' => $cleanName,
+                'description' => $data['description'] ?? null,
             ]);
-        }
+            $project->owner_id = $creator->id;
+            $project->created_at = now();
+            $project->updated_at = now();
+            $this->saveProject($project);
 
-        // 3. Simpan project dengan owner_id dari server dan waktu dateTime()
-        $project = new Project([
-            'name' => $cleanName,
-            'description' => $data['description'] ?? null,
-        ]);
-        $project->owner_id = $creator->id;
-        $project->created_at = now();
-        $project->updated_at = now();
-        $this->saveProject($project);
+            // 4. Titik pemanggilan log aktivitas (REQ-03.12)
+            $this->logActivity('CREATE_PROJECT', $project, $creator, [
+                'new' => [
+                    'name' => $project->name,
+                    'description' => $project->description,
+                ],
+            ]);
 
-        // 4. Titik pemanggilan log aktivitas (REQ-03.12)
-        $this->logActivity('CREATE_PROJECT', $project, $creator, [
-            'name' => $project->name,
-        ]);
-
-        return $project;
+            return $project;
+        });
     }
 
     /**
@@ -115,37 +121,45 @@ class ProjectService
 
         $cleanName = trim($data['name']);
 
-        // Pengecekan nama duplikat case-insensitive (mengabaikan project sendiri)
-        $existingProject = Project::where('name', $cleanName)
-            ->where('id', '!=', $project->id)
-            ->exists();
-        if ($existingProject) {
-            throw ValidationException::withMessages([
-                'name' => 'Nama sudah digunakan',
+        return DB::transaction(function () use ($user, $project, $cleanName, $data) {
+            $lockedProject = Project::whereKey($project->id)->lockForUpdate()->firstOrFail();
+
+            if ($user->id !== $lockedProject->owner_id || $user->role !== 'MAINTAINER') {
+                throw new AuthorizationException('Akses tidak tersedia');
+            }
+
+            // Pengecekan nama duplikat case-insensitive (mengabaikan project sendiri)
+            $existingProject = Project::where('name', $cleanName)
+                ->where('id', '!=', $lockedProject->id)
+                ->exists();
+            if ($existingProject) {
+                throw ValidationException::withMessages([
+                    'name' => 'Nama sudah digunakan',
+                ]);
+            }
+
+            $oldValues = [
+                'name' => $lockedProject->name,
+                'description' => $lockedProject->description,
+            ];
+
+            // 3. Update informasi dengan waktu dateTime()
+            $lockedProject->name = $cleanName;
+            $lockedProject->description = $data['description'] ?? null;
+            $lockedProject->updated_at = now();
+            $this->saveProject($lockedProject);
+
+            // 4. Titik pemanggilan log aktivitas (REQ-03.12)
+            $this->logActivity('UPDATE_PROJECT', $lockedProject, $user, [
+                'old' => $oldValues,
+                'new' => [
+                    'name' => $lockedProject->name,
+                    'description' => $lockedProject->description,
+                ],
             ]);
-        }
 
-        $oldValues = [
-            'name' => $project->name,
-            'description' => $project->description,
-        ];
-
-        // 3. Update informasi dengan waktu dateTime()
-        $project->name = $cleanName;
-        $project->description = $data['description'] ?? null;
-        $project->updated_at = now();
-        $this->saveProject($project);
-
-        // 4. Titik pemanggilan log aktivitas (REQ-03.12)
-        $this->logActivity('UPDATE_PROJECT', $project, $user, [
-            'old' => $oldValues,
-            'new' => [
-                'name' => $project->name,
-                'description' => $project->description,
-            ],
-        ]);
-
-        return $project;
+            return $lockedProject;
+        });
     }
 
     /**
@@ -220,9 +234,12 @@ class ProjectService
 
             // 7. Titik pemanggilan log aktivitas (REQ-03.12)
             $this->logActivity('INVITE_REPORTER', $project, $inviter, [
-                'reporter_id' => $reporter->id,
-                'email' => $email,
-                'invitation_id' => $invitation->id,
+                'new' => [
+                    'invitation_id' => $invitation->id,
+                    'reporter_id' => $reporter->id,
+                    'email' => $email,
+                    'status' => 'PENDING',
+                ],
             ]);
 
             return $invitation;
@@ -258,8 +275,16 @@ class ProjectService
 
             // Titik pemanggilan log aktivitas (REQ-03.12)
             $this->logActivity('CANCEL_INVITATION', $project, $user, [
-                'invitation_id' => $invitation->id,
-                'reporter_id' => $invitation->reporter_id,
+                'old' => [
+                    'invitation_id' => $invitation->id,
+                    'reporter_id' => $invitation->reporter_id,
+                    'status' => 'PENDING',
+                ],
+                'new' => [
+                    'invitation_id' => $invitation->id,
+                    'reporter_id' => $invitation->reporter_id,
+                    'status' => 'CANCELED',
+                ],
             ]);
 
             return $invitation;
@@ -299,8 +324,16 @@ class ProjectService
 
             // Titik pemanggilan log aktivitas (REQ-03.12)
             $this->logActivity('REMOVE_MEMBER', $project, $user, [
-                'user_id' => $userId,
-                'membership_id' => $membership->id,
+                'old' => [
+                    'membership_id' => $membership->id,
+                    'user_id' => $userId,
+                    'is_active' => true,
+                ],
+                'new' => [
+                    'membership_id' => $membership->id,
+                    'user_id' => $userId,
+                    'is_active' => false,
+                ],
             ]);
 
             return $membership;
@@ -348,7 +381,15 @@ class ProjectService
                     ->lockForUpdate()
                     ->first();
 
+                $oldDetails = [
+                    'invitation_id' => $invitation->id,
+                    'status' => 'PENDING',
+                ];
+
                 if ($membership) {
+                    $oldDetails['membership_id'] = $membership->id;
+                    $oldDetails['is_active'] = false;
+
                     // Reaktivasi baris yang sudah ada
                     $membership->update([
                         'is_active' => true,
@@ -357,7 +398,7 @@ class ProjectService
                     ]);
                 } else {
                     // Buat baris baru hanya jika belum pernah ada
-                    Membership::create([
+                    $membership = Membership::create([
                         'project_id' => $invitation->project_id,
                         'user_id' => $reporter->id,
                         'is_active' => true,
@@ -367,7 +408,13 @@ class ProjectService
                 }
 
                 $this->logActivity('ACCEPT_INVITATION', $project, $reporter, [
-                    'invitation_id' => $invitation->id,
+                    'old' => $oldDetails,
+                    'new' => [
+                        'invitation_id' => $invitation->id,
+                        'status' => 'ACCEPTED',
+                        'membership_id' => $membership->id,
+                        'is_active' => true,
+                    ],
                 ]);
             } else {
                 $invitation->update([
@@ -376,7 +423,14 @@ class ProjectService
                 ]);
 
                 $this->logActivity('REJECT_INVITATION', $project, $reporter, [
-                    'invitation_id' => $invitation->id,
+                    'old' => [
+                        'invitation_id' => $invitation->id,
+                        'status' => 'PENDING',
+                    ],
+                    'new' => [
+                        'invitation_id' => $invitation->id,
+                        'status' => 'REJECTED',
+                    ],
                 ]);
             }
 
@@ -430,10 +484,9 @@ class ProjectService
     }
 
     /**
-     * Integration TODO Sprint 3 (REQ-03.12 / REQ-07.7): koordinasikan audit permanen
-     * dengan Joshua. Log::info hanya log aplikasi, BUKAN record tabel activity_logs.
-     * Tidak memanggil query database tabel activity_logs secara langsung sebelum
-     * kepemilikan dan skema tabel tersebut difinalisasi bersama Joshua.
+     * Mencatat aktivitas project ke file log dan tabel activity_logs (REQ-03.12 / REQ-07.7).
+     * Sesuai migration 2026_11_01_000001_add_duplicate_review_and_activity_logs:
+     * project_id, user_id, issue_id = null, action, old_values, new_values, reason, created_at, updated_at.
      */
     protected function logActivity(string $action, Project $project, ?User $actor, array $details = []): void
     {
@@ -443,6 +496,30 @@ class ProjectService
             'action' => $action,
             'details' => $details,
             'timestamp' => now()->toIso8601String(),
+        ]);
+
+        $oldValues = null;
+        $newValues = null;
+
+        if (array_key_exists('old', $details) || array_key_exists('new', $details)) {
+            $oldValues = isset($details['old']) ? json_encode($details['old'], JSON_THROW_ON_ERROR) : null;
+            $newValues = isset($details['new']) ? json_encode($details['new'], JSON_THROW_ON_ERROR) : null;
+        } elseif (! empty($details)) {
+            $newValues = json_encode($details, JSON_THROW_ON_ERROR);
+        }
+
+        $reason = $details['reason'] ?? null;
+
+        DB::table('activity_logs')->insert([
+            'project_id' => $project->id,
+            'user_id' => $actor?->id,
+            'issue_id' => null,
+            'action' => $action,
+            'old_values' => $oldValues,
+            'new_values' => $newValues,
+            'reason' => $reason,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
     }
 }
