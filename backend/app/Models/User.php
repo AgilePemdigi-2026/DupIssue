@@ -50,6 +50,6 @@ class User extends Authenticatable
     // One user can vote for many issues.
     public function issueVotes(): HasMany
     {
-        return $this->hasMany(IssueVote::class);
+        return $this->hasMany(IssueVote::class, 'voter_id');
     }
 }

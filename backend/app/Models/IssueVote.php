@@ -10,11 +10,11 @@ class IssueVote extends Model
 {
     use HasFactory;
 
-    protected $table = 'issue_votes';
+    protected $table = 'votes';
 
     protected $fillable = [
         'issue_id',
-        'user_id',
+        'voter_id',
     ];
 
     public function issue(): BelongsTo
@@ -24,6 +24,6 @@ class IssueVote extends Model
 
     public function user(): BelongsTo
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'voter_id');
     }
 }

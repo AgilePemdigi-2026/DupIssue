@@ -82,9 +82,9 @@ class IssueVotingTest extends TestCase
 
         $response->assertSessionHas('success');
 
-        $this->assertDatabaseHas('issue_votes', [
+        $this->assertDatabaseHas('votes', [
             'issue_id' => $issue->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
 
         $this->assertDatabaseHas('issues', [
@@ -105,7 +105,7 @@ class IssueVotingTest extends TestCase
             route('issues.vote', [$project, $issue])
         );
 
-        $this->assertDatabaseCount('issue_votes', 1);
+        $this->assertDatabaseCount('votes', 1);
 
         $this->assertDatabaseHas('issues', [
             'id' => $issue->id,
@@ -127,9 +127,9 @@ class IssueVotingTest extends TestCase
 
         $response->assertSessionHas('success');
 
-        $this->assertDatabaseMissing('issue_votes', [
+        $this->assertDatabaseMissing('votes', [
             'issue_id' => $issue->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
 
         $this->assertDatabaseHas('issues', [
@@ -166,7 +166,7 @@ class IssueVotingTest extends TestCase
 
         $response->assertRedirect(route('login'));
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
     }
 
     public function test_reporter_without_membership_cannot_vote(): void
@@ -183,7 +183,7 @@ class IssueVotingTest extends TestCase
 
         $response->assertForbidden();
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
     }
 
     public function test_reporter_with_inactive_membership_cannot_vote(): void
@@ -203,7 +203,7 @@ class IssueVotingTest extends TestCase
 
         $response->assertForbidden();
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
     }
 
     public function test_user_cannot_vote_on_issue_from_another_project(): void
@@ -229,7 +229,7 @@ class IssueVotingTest extends TestCase
 
         $response->assertNotFound();
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
     }
 
     public function test_vote_count_matches_issue_vote_records(): void
@@ -280,7 +280,7 @@ class IssueVotingTest extends TestCase
 
         $response->assertForbidden();
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
 
         $this->assertDatabaseHas('issues', [
             'id' => $issue->id,
@@ -303,7 +303,7 @@ class IssueVotingTest extends TestCase
 
         $vote = new IssueVote();
         $vote->issue_id = $issue->id;
-        $vote->user_id = $reporter->id;
+        $vote->voter_id = $reporter->id;
         $vote->save();
 
         $issue->vote_count = 1;
@@ -315,9 +315,9 @@ class IssueVotingTest extends TestCase
 
         $response->assertForbidden();
 
-        $this->assertDatabaseHas('issue_votes', [
+        $this->assertDatabaseHas('votes', [
             'issue_id' => $issue->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
 
         $this->assertDatabaseHas('issues', [
@@ -348,17 +348,17 @@ class IssueVotingTest extends TestCase
         );
 
         $response->assertRedirect(route('issues.show', [$project, $parent]));
-        $this->assertDatabaseHas('issue_votes', [
+        $this->assertDatabaseHas('votes', [
             'issue_id' => $parent->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
-        $this->assertDatabaseMissing('issue_votes', [
+        $this->assertDatabaseMissing('votes', [
             'issue_id' => $child->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
-        $this->assertDatabaseMissing('issue_votes', [
+        $this->assertDatabaseMissing('votes', [
             'issue_id' => $unrelatedIssue->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
         $this->assertDatabaseHas('issues', [
             'id' => $parent->id,
@@ -393,13 +393,13 @@ class IssueVotingTest extends TestCase
             ->delete(route('issues.unvote', [$project, $child]));
 
         $response->assertRedirect(route('issues.show', [$project, $parent]));
-        $this->assertDatabaseMissing('issue_votes', [
+        $this->assertDatabaseMissing('votes', [
             'issue_id' => $parent->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
-        $this->assertDatabaseMissing('issue_votes', [
+        $this->assertDatabaseMissing('votes', [
             'issue_id' => $child->id,
-            'user_id' => $reporter->id,
+            'voter_id' => $reporter->id,
         ]);
         $this->assertDatabaseHas('issues', [
             'id' => $parent->id,
@@ -429,9 +429,11 @@ class IssueVotingTest extends TestCase
             ->assertStatus(409);
         $this->actingAs($reporter)
             ->get(route('issues.show', [$project, $orphan]))
-            ->assertNotFound();
+            ->assertOk()
+            ->assertDontSee(route('issues.vote', [$project, $orphan]))
+            ->assertDontSee(route('issues.unvote', [$project, $orphan]));
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
         $this->assertDatabaseHas('issues', [
             'id' => $orphan->id,
             'vote_count' => 0,
@@ -478,10 +480,12 @@ class IssueVotingTest extends TestCase
                 ->assertStatus(409);
             $this->actingAs($reporter)
                 ->get(route('issues.show', [$project, $child]))
-                ->assertNotFound();
+                ->assertOk()
+                ->assertDontSee(route('issues.vote', [$project, $child]))
+                ->assertDontSee(route('issues.unvote', [$project, $child]));
         }
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
         $this->assertDatabaseHas('issues', [
             'id' => $grandparent->id,
             'vote_count' => 0,
@@ -530,9 +534,14 @@ class IssueVotingTest extends TestCase
             ->assertStatus(409);
         $this->actingAs($reporter)
             ->get(route('issues.show', [$project, $child]))
-            ->assertNotFound();
+            ->assertOk()
+            ->assertSee('Issue induk tidak tersedia.')
+            ->assertDontSee($foreignParent->title)
+            ->assertDontSee(route('issues.show', [$otherProject, $foreignParent]))
+            ->assertDontSee(route('issues.vote', [$project, $child]))
+            ->assertDontSee(route('issues.unvote', [$project, $child]));
 
-        $this->assertDatabaseCount('issue_votes', 0);
+        $this->assertDatabaseCount('votes', 0);
         $this->assertDatabaseHas('issues', [
             'id' => $foreignParent->id,
             'vote_count' => 0,
@@ -562,5 +571,70 @@ class IssueVotingTest extends TestCase
             ->assertSee('Jumlah Vote')
             ->assertDontSee(route('issues.vote', [$project, $issue]))
             ->assertDontSee(route('issues.unvote', [$project, $issue]));
+    }
+
+    public function test_closed_duplicate_vote_is_redirected_to_parent(): void
+    {
+        [, $reporter, $project, $parent] = $this->createVotingFixture();
+        $child = $this->createRelatedIssue($project, $reporter, 'Closed child duplicate', 'CLOSED', $parent->id);
+
+        $this->actingAs($reporter)->get(route('issues.show', [$project, $child]))
+            ->assertOk()->assertSee('Vote Issue');
+        $this->actingAs($reporter)->post(route('issues.vote', [$project, $child]))
+            ->assertRedirect(route('issues.show', [$project, $parent]));
+
+        $this->assertDatabaseHas('votes', ['issue_id' => $parent->id, 'voter_id' => $reporter->id]);
+        $this->assertDatabaseMissing('votes', ['issue_id' => $child->id, 'voter_id' => $reporter->id]);
+        $this->assertDatabaseHas('issues', ['id' => $parent->id, 'vote_count' => 1]);
+        $this->assertDatabaseHas('issues', ['id' => $child->id, 'vote_count' => 0]);
+    }
+
+    public function test_closed_duplicate_unvote_removes_vote_from_parent(): void
+    {
+        [, $reporter, $project, $parent] = $this->createVotingFixture();
+        $child = $this->createRelatedIssue($project, $reporter, 'Closed child duplicate', 'CLOSED', $parent->id);
+
+        $this->actingAs($reporter)->post(route('issues.vote', [$project, $parent]));
+        $this->actingAs($reporter)->delete(route('issues.unvote', [$project, $child]))
+            ->assertRedirect(route('issues.show', [$project, $parent]));
+        $this->assertDatabaseMissing('votes', ['issue_id' => $parent->id, 'voter_id' => $reporter->id]);
+        $this->assertDatabaseHas('issues', ['id' => $parent->id, 'vote_count' => 0]);
+        $this->assertDatabaseHas('issues', ['id' => $child->id, 'vote_count' => 0]);
+    }
+
+    public function test_closed_parent_without_duplicate_link_remains_votable(): void
+    {
+        [, $reporter, $project, $issue] = $this->createVotingFixture();
+        $issue->status = 'CLOSED';
+        $issue->save();
+        $this->actingAs($reporter)->post(route('issues.vote', [$project, $issue]))
+            ->assertSessionHas('success');
+        $this->assertDatabaseHas('votes', ['issue_id' => $issue->id, 'voter_id' => $reporter->id]);
+    }
+
+    public function test_activity_log_is_written_once_per_effective_vote_change(): void
+    {
+        [, $reporter, $project, $issue] = $this->createVotingFixture();
+        $url = route('issues.vote', [$project, $issue]);
+        $unvoteUrl = route('issues.unvote', [$project, $issue]);
+        $this->actingAs($reporter)->post($url)->assertSessionHas('success');
+        $this->actingAs($reporter)->post($url)->assertSessionHas('info');
+        $this->actingAs($reporter)->delete($unvoteUrl)->assertSessionHas('success');
+        $this->actingAs($reporter)->delete($unvoteUrl)->assertSessionHas('info');
+
+        $this->assertDatabaseHas('activity_logs', [
+            'project_id' => $project->id, 'issue_id' => $issue->id,
+            'user_id' => $reporter->id, 'action' => 'VOTE_ADDED',
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'project_id' => $project->id, 'issue_id' => $issue->id,
+            'user_id' => $reporter->id, 'action' => 'VOTE_REMOVED',
+        ]);
+        $this->assertSame(1, \Illuminate\Support\Facades\DB::table('activity_logs')
+            ->where('issue_id', $issue->id)->where('action', 'VOTE_ADDED')->count());
+        $this->assertSame(1, \Illuminate\Support\Facades\DB::table('activity_logs')
+            ->where('issue_id', $issue->id)->where('action', 'VOTE_REMOVED')->count());
+        $this->assertDatabaseCount('votes', 0);
+        $this->assertDatabaseHas('issues', ['id' => $issue->id, 'vote_count' => 0]);
     }
 }

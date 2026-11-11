@@ -44,7 +44,7 @@ class VoteController extends Controller
 
     /**
      * Lock the requested issue and resolve its valid parent
-     * when the requested issue is marked as DUPLICATE.
+     * when the requested issue has a duplicate_of link (including CLOSED children).
      */
     private function lockVotingIssue(
         Project $project,
@@ -55,7 +55,7 @@ class VoteController extends Controller
             ->firstOrFail();
 
         $issueIds = [$snapshot->getKey()];
-        if ($snapshot->status === 'DUPLICATE' && $snapshot->duplicate_of !== null) {
+        if ($snapshot->duplicate_of !== null) {
             $issueIds[] = (int) $snapshot->duplicate_of;
         }
 
@@ -74,11 +74,11 @@ class VoteController extends Controller
             404
         );
 
-        if ($lockedIssue->status !== 'DUPLICATE') {
-            abort_unless(
-                $lockedIssue->duplicate_of === null,
+        if ($lockedIssue->duplicate_of === null) {
+            abort_if(
+                $lockedIssue->status === 'DUPLICATE',
                 409,
-                'Status issue dan relasi duplikat tidak valid.'
+                'Issue duplikat tidak memiliki parent issue.'
             );
 
             return $lockedIssue;
@@ -114,6 +114,28 @@ class VoteController extends Controller
         return $parentIssue;
     }
 
+    /** REQ-01.18: audit only committed, effective Vote/Unvote changes. */
+    private function logVoteChange(
+        Project $project,
+        Issue $issue,
+        int $userId,
+        string $action,
+        int $oldCount,
+        int $newCount
+    ): void {
+        DB::table('activity_logs')->insert([
+            'project_id' => $project->getKey(),
+            'user_id' => $userId,
+            'issue_id' => $issue->getKey(),
+            'action' => $action,
+            'old_values' => json_encode(['vote_count' => $oldCount], JSON_THROW_ON_ERROR),
+            'new_values' => json_encode(['vote_count' => $newCount], JSON_THROW_ON_ERROR),
+            'reason' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     /**
      * Store a vote for an issue or its valid parent.
      */
@@ -135,7 +157,7 @@ class VoteController extends Controller
 
             $alreadyVoted = IssueVote::query()
                 ->where('issue_id', $votingIssue->id)
-                ->where('user_id', $user->id)
+                ->where('voter_id', $user->id)
                 ->exists();
 
             if ($alreadyVoted) {
@@ -145,13 +167,16 @@ class VoteController extends Controller
                 ];
             }
 
+            $oldCount = (int) $votingIssue->vote_count;
             IssueVote::create([
                 'issue_id' => $votingIssue->id,
-                'user_id' => $user->id,
+                'voter_id' => $user->id,
             ]);
 
             $votingIssue->vote_count = $votingIssue->votes()->count();
             $votingIssue->save();
+            $this->logVoteChange($project, $votingIssue, (int) $user->id,
+                'VOTE_ADDED', $oldCount, (int) $votingIssue->vote_count);
 
             return [
                 'issue' => $votingIssue,
@@ -160,7 +185,7 @@ class VoteController extends Controller
         }, 3);
 
         if (! $result['voted']) {
-            $message = 'Kamu sudah memberikan vote untuk issue ini.';
+            $message = 'Vote sudah aktif';
             $status = 'info';
         } else {
             $message = 'Vote berhasil diberikan.';
@@ -201,7 +226,7 @@ class VoteController extends Controller
 
             $vote = IssueVote::query()
                 ->where('issue_id', $votingIssue->id)
-                ->where('user_id', $user->id)
+                ->where('voter_id', $user->id)
                 ->first();
 
             if (! $vote) {
@@ -211,10 +236,13 @@ class VoteController extends Controller
                 ];
             }
 
+            $oldCount = (int) $votingIssue->vote_count;
             $vote->delete();
 
             $votingIssue->vote_count = $votingIssue->votes()->count();
             $votingIssue->save();
+            $this->logVoteChange($project, $votingIssue, (int) $user->id,
+                'VOTE_REMOVED', $oldCount, (int) $votingIssue->vote_count);
 
             return [
                 'issue' => $votingIssue,

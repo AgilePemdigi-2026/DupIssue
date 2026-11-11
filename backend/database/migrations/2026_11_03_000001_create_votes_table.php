@@ -8,20 +8,20 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('issue_votes', function (Blueprint $table) {
+        Schema::create('votes', function (Blueprint $table) {
             $table->id();
 
             $table->foreignId('issue_id')
                 ->constrained('issues')
                 ->cascadeOnDelete();
 
-            $table->foreignId('user_id')
+            $table->foreignId('voter_id')
                 ->constrained('users')
                 ->cascadeOnDelete();
 
             $table->unique(
-                ['issue_id', 'user_id'],
-                'issue_votes_issue_user_unique'
+                ['issue_id', 'voter_id'],
+                'votes_issue_voter_unique'
             );
 
             $table->timestamps();
@@ -30,6 +30,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('issue_votes');
+        Schema::dropIfExists('votes');
     }
 };

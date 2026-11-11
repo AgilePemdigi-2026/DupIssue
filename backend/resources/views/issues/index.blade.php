@@ -18,16 +18,51 @@
             </div>
         </div>
 
+        <form method="GET" action="{{ route('issues.index', ['project' => $project]) }}" class="border rounded p-3 mb-4" role="search">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-7">
+                    <label for="cari" class="form-label">Cari judul atau deskripsi issue</label>
+                    <input class="form-control @error('cari') is-invalid @enderror" type="search" id="cari" name="cari"
+                           value="{{ $cari }}" maxlength="200" placeholder="Ketik kata kunci" autocomplete="off">
+                    @error('cari') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-md-3">
+                    <label for="status" class="form-label">Status</label>
+                    <select class="form-select @error('status') is-invalid @enderror" id="status" name="status">
+                        <option value="">Semua status</option>
+                        @foreach ($allowedStatuses as $choice)
+                            <option value="{{ $choice }}" @selected($status === $choice)>{{ $choice === 'IN_PROGRESS' ? 'In Progress' : ucfirst(strtolower($choice)) }}</option>
+                        @endforeach
+                    </select>
+                    @error('status') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                </div>
+                <div class="col-md-2 d-grid gap-2">
+                    <button class="btn btn-primary" type="submit">Cari</button>
+                    <a class="btn btn-outline-secondary" href="{{ route('issues.index', ['project' => $project]) }}">Reset Filter</a>
+                </div>
+            </div>
+        </form>
+
         @if ($issues->count() === 0)
-            <p class="text-muted mb-0">Belum ada issue pada project ini.</p>
+            <div class="alert alert-light border" role="status">
+                <strong>Issue tidak tersedia</strong>
+                @if ($cari !== '' || $status !== '')
+    <p class="mb-2 small text-muted">Tidak ditemukan hasil yang sesuai filter.</p>
+@else
+    <p class="mb-2 small text-muted">Belum ada issue pada project ini.</p>
+@endif
+                <a class="btn btn-outline-primary btn-sm" href="{{ route('issues.index', ['project' => $project]) }}">Reset Filter</a>
+            </div>
         @else
-            <div class="table-responsive">
+            <div class="table-responsive" id="issue_list">
                 <table class="table table-hover align-middle">
                     <thead>
                         <tr>
                             <th scope="col">ID</th>
                             <th scope="col">Judul Issue</th>
                             <th scope="col">Status</th>
+                            <th scope="col">Sumber</th>
+                            <th scope="col">Vote</th>
                             <th scope="col">Deteksi NLP</th>
                             <th scope="col">Aksi</th>
                         </tr>
@@ -36,8 +71,30 @@
                         @foreach ($issues as $issue)
                             <tr>
                                 <td>#{{ $issue->id }}</td>
-                                <td>{{ $issue->title }}</td>
+                                <td>
+                                    @if ($issue->duplicate_of !== null)
+                                        <s class="text-muted">{{ $issue->title }}</s>
+                                        <div class="small mt-1">
+                                            @if ($issue->parentIssue)
+                                                Duplikat dari
+                                                <a href="{{ route('issues.show', ['project' => $project, 'issue' => $issue->parentIssue]) }}">#{{ $issue->parentIssue->id }}</a>
+                                            @else
+                                                <span class="text-warning">Issue induk tidak tersedia</span>
+                                            @endif
+                                        </div>
+                                    @else
+                                        {{ $issue->title }}
+                                        @if ($issue->duplicate_count > 0)
+                                            <div class="mt-1">
+                                                <span class="badge text-bg-info">Master Cluster</span>
+                                                <small class="text-muted">{{ $issue->duplicate_count }} duplikat terhubung</small>
+                                            </div>
+                                        @endif
+                                    @endif
+                                </td>
                                 <td>{{ $issue->status }}</td>
+                                <td>{{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</td>
+                                <td>{{ (int) $issue->vote_count }}</td>
                                 <td>{{ $issue->detection_status }}</td>
                                 <td>
                                     <a class="btn btn-outline-primary btn-sm" href="{{ route('issues.show', ['project' => $project, 'issue' => $issue]) }}">
