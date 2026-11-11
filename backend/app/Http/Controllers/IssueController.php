@@ -164,6 +164,20 @@ class IssueController extends Controller
             ->where('project_id', $project->getKey())
             ->first();
 
+        // Additive Issue Voting integration; keep main's project scoping and status history.
+        $votingIssue = $issue->duplicate_of === null ? $issue : $parentIssue;
+        $canVote = $user->role === 'REPORTER'
+            && $project->memberships()
+                ->where('user_id', $user->getKey())
+                ->where('is_active', true)
+                ->exists()
+            && $votingIssue !== null
+            && $votingIssue->duplicate_of === null
+            && $votingIssue->status !== 'DUPLICATE';
+        $hasVoted = $canVote
+            ? $votingIssue->votes()->where('voter_id', $user->getKey())->exists()
+            : false;
+
         // Only display recommendations for issues belonging to this project.
         // The show action above already enforces project access for the viewer.
         $recommendations = DuplicateCandidate::query()
@@ -184,7 +198,10 @@ class IssueController extends Controller
 
         $statusHistory = $this->statusHistory($project, $issue);
 
-        return view('issues.show', compact('project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory', 'parentIssue'));
+        return view('issues.show', compact(
+            'project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory',
+            'parentIssue', 'votingIssue', 'canVote', 'hasVoted'
+        ));
     }
 
     /** Read-only, project-scoped status transitions for HTML and JSON. */

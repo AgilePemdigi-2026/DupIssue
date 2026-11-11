@@ -24,3 +24,4 @@ default:
         - FeatureContext
         - IssueRecommendationBddContext
         - IssueStatusBddContext
+        - VoteBddContext
