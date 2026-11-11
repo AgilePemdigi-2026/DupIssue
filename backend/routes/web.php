@@ -170,6 +170,15 @@ Route::middleware('auth')->group(function () {
         ->middleware('role:REPORTER')
         ->name('issues.unvote');
 
+    // REQ-05 — Duplicate Review routes (MAINTAINER only)
+    Route::get('/projects/{project}/duplicates',
+        [DuplicateReviewController::class, 'index'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.duplicates.index');
+    Route::get('/projects/{project}/issues/{issue}/candidates/{candidate}/compare',
+        [DuplicateReviewController::class, 'compare'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.compare');
     Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
         [DuplicateReviewController::class, 'decide'])
         ->middleware('role:MAINTAINER')
@@ -178,6 +187,10 @@ Route::middleware('auth')->group(function () {
         [DuplicateReviewController::class, 'cancel'])
         ->middleware('role:MAINTAINER')
         ->name('issues.duplicates.cancel');
+    Route::post('/projects/{project}/issues/{issue}/detection/retry',
+        [DuplicateReviewController::class, 'retry'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.detection.retry');
     Route::post('/projects/{project}/issues/{issue}/status/preview',
         [IssueStatusController::class, 'preview'])
         ->middleware('role:MAINTAINER')

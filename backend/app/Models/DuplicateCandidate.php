@@ -33,6 +33,11 @@ class DuplicateCandidate extends Model
         return $this->belongsTo(Issue::class, 'candidate_issue_id');
     }
 
+    public function decidedBy()
+    {
+        return $this->belongsTo(User::class, 'decided_by');
+    }
+
     protected static function booted(): void
     {
         static::saving(function (self $candidate): void {
