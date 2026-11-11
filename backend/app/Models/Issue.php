@@ -44,8 +44,15 @@ class Issue extends Model
         return $this->hasMany(self::class, 'duplicate_of');
     }
 
+    // REQ-05 — Duplicate Review: satu issue bisa punya banyak kandidat duplikat.
     public function duplicateCandidates(): HasMany
     {
         return $this->hasMany(DuplicateCandidate::class, 'issue_id');
+    }
+
+    // PR #37 — Voting: satu issue bisa punya banyak vote dari reporter.
+    public function votes(): HasMany
+    {
+        return $this->hasMany(IssueVote::class);
     }
 }
