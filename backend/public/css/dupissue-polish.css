@@ -266,6 +266,14 @@
 .di-app .di-table-candidates th:nth-child(5) { width: 13%; }
 .di-app .di-table-candidates th:nth-child(6) { width: 13%; }
 .di-app .di-table-candidates th:nth-child(7) { width: 10%; }
+.di-app .di-table-issues td:last-child .btn,
+.di-app .di-table-candidates td:last-child .btn {
+    width: 100%;
+    white-space: normal;
+    padding-inline: .45rem;
+    overflow-wrap: normal;
+}
+.di-app .di-table-candidates td:last-child { min-width: 0; }
 .di-app .di-issue-link {
     display: block;
     color: #3e347f;
