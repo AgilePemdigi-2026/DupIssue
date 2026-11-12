@@ -419,3 +419,55 @@
         scroll-behavior: auto !important;
     }
 }
+
+/* Login, registration and recovery share the same presentation language.
+   No changes to authentication inputs or handlers. */
+.di-auth {
+    min-height: 100vh;
+    background: radial-gradient(ellipse 850px 430px at 88% -5%, #eeeafb, transparent 73%),
+                #f7f8fc !important;
+    font: 400 .9rem/1.62 'Poppins', 'Segoe UI', system-ui, sans-serif;
+    color: #24243b;
+}
+.di-auth .card {
+    border: 1px solid #e5e8f1 !important;
+    border-radius: 18px !important;
+    box-shadow: 0 18px 54px rgba(46,42,87,.075) !important;
+}
+.di-auth .brand-title {
+    color: #5546a9 !important;
+    font-size: clamp(1.5rem, 2.8vw, 1.9rem);
+    font-weight: 700;
+    letter-spacing: -.045em;
+}
+.di-auth .form-label { font-size: .82rem; font-weight: 600; }
+.di-auth .form-control {
+    border: 1px solid #dce0eb;
+    border-radius: 10px;
+    min-height: 44px;
+    font-size: .88rem;
+    padding: .65rem .82rem;
+}
+.di-auth .form-control:focus {
+    border-color: #8576cf;
+    box-shadow: 0 0 0 3px rgba(85,70,169,.11);
+}
+.di-auth .btn {
+    min-height: 43px;
+    border-radius: 10px;
+    padding: .65rem 1rem;
+    font-size: .85rem;
+    font-weight: 600;
+    transition: background-color .18s ease, border-color .18s ease, transform .22s cubic-bezier(.22,1,.36,1);
+}
+.di-auth .btn-primary { background: #5546a9 !important; border-color: #5546a9 !important; }
+.di-auth .btn-primary:hover { background: #40337d !important; border-color: #40337d !important; }
+.di-auth .btn:focus-visible,
+.di-auth :where(a,input):focus-visible { outline: 2px solid #6559c6; outline-offset: 3px; }
+.di-auth a { color: #5142a4; }
+.di-auth .text-muted { color: #68718a !important; }
+.di-auth .alert { border-radius: 11px; font-size: .82rem; }
+.di-app .di-project-tiles > .col-12 .di-page-header { margin-bottom: 0 !important; }
+@media (prefers-reduced-motion: no-preference) {
+    .di-auth .card { animation: di-rise .42s cubic-bezier(.22,1,.36,1) both; }
+}
