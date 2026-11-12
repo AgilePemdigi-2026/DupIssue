@@ -3,11 +3,11 @@
 @section('title', $project->name . ' - DupIssue')
 
 @section('content')
-<div class="row g-4">
+<div class="row g-4 di-project-tiles">
     <div class="col-12">
         <div class="card shadow-sm border-0">
             <div class="card-body p-4">
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 di-page-header mb-0">
                     <div>
                         <div class="d-flex align-items-center gap-2 mb-1">
                             <h2 class="h3 fw-bold mb-0">{{ $project->name }}</h2>
@@ -19,7 +19,7 @@
                             {{ $project->description ?: 'Tidak ada deskripsi untuk project ini.' }}
                         </p>
                     </div>
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 di-toolbar-actions">
                         @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
                             <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-warning">
                                 <i class="bi bi-intersect me-1"></i> Review Kandidat Duplikat
@@ -53,9 +53,11 @@
                 <p class="text-muted small">
                     Undang Reporter baru dan atur akses pengguna ke project ini.
                 </p>
-                <a href="/projects/{{ $project->id }}/members" class="btn btn-primary btn-sm w-100">
-                    Buka Anggota Project
-                </a>
+                <div class="di-card-actions">
+                    <a href="/projects/{{ $project->id }}/members" class="btn btn-primary btn-sm w-100">
+                        Buka Anggota Project
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -75,15 +77,17 @@
                 <p class="text-muted small">
                     Pantau issue yang dilaporkan atau kirim laporan issue baru.
                 </p>
-                @include('issues.submit-link', ['project' => $project])
-                <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-primary btn-sm w-100 mb-2">
-                    Lihat Issue
-                </a>
-                @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
-                    <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-outline-warning btn-sm w-100">
-                        Review Kandidat Duplikat
+                <div class="di-card-actions">
+                    @include('issues.submit-link', ['project' => $project])
+                    <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-primary btn-sm w-100">
+                        Lihat Issue
                     </a>
-                @endif
+                    @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+                        <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-outline-warning btn-sm w-100">
+                            Review Kandidat Duplikat
+                        </a>
+                    @endif
+                </div>
             </div>
         </div>
     </div>
@@ -103,9 +107,11 @@
                 <p class="text-muted small">
                     Ubah nama dan deskripsi project serta parameter pendukung.
                 </p>
-                <a href="/projects/{{ $project->id }}/settings" class="btn btn-outline-primary btn-sm w-100">
-                    Pengaturan Project
-                </a>
+                <div class="di-card-actions">
+                    <a href="/projects/{{ $project->id }}/settings" class="btn btn-outline-primary btn-sm w-100">
+                        Pengaturan Project
+                    </a>
+                </div>
             </div>
         </div>
     </div>

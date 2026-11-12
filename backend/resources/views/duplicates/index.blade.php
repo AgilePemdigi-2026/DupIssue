@@ -3,13 +3,13 @@
 @section('title', 'Daftar Kandidat Duplikat — ' . e($project->name))
 
 @section('content')
-<div class="container py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+<div class="di-review-page">
+    <div class="di-page-header">
         <div>
             <h1 class="h3 mb-1">Daftar Kandidat Duplikat</h1>
             <p class="text-muted mb-0">Project: <strong>{{ $project->name }}</strong></p>
         </div>
-        <div>
+        <div class="di-toolbar-actions">
             <a href="{{ route('projects.show', ['id' => $project->id]) }}" class="btn btn-outline-secondary btn-sm">Kembali ke Project</a>
             <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-primary btn-sm">Daftar Issue</a>
         </div>
@@ -96,7 +96,7 @@
                 </div>
             @else
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
+                    <table class="table table-hover align-middle mb-0 di-table-candidates">
                         <thead class="table-light">
                             <tr>
                                 <th>Issue Sumber</th>
@@ -112,16 +112,18 @@
                             @foreach ($candidates as $cand)
                                 <tr>
                                     <td>
-                                        <a href="{{ route('issues.show', ['project' => $project, 'issue' => $cand->issue]) }}" class="fw-semibold text-decoration-none">
-                                            #{{ $cand->issue->id }} — {{ $cand->issue->title }}
+                                        <a href="{{ route('issues.show', ['project' => $project, 'issue' => $cand->issue]) }}" class="di-issue-link">
+                                            <span class="d-block small text-muted">Issue #{{ $cand->issue->id }}</span>
+                                            <span class="d-block">{{ $cand->issue->title }}</span>
                                         </a>
-                                        <div class="small text-muted">Status: {{ $cand->issue->status }} | Vote: {{ $cand->issue->vote_count }}</div>
+                                        <div class="di-issue-meta"><span>Status: {{ $cand->issue->status }}</span><span>Vote: {{ $cand->issue->vote_count }}</span></div>
                                     </td>
                                     <td>
-                                        <a href="{{ route('issues.show', ['project' => $project, 'issue' => $cand->candidateIssue]) }}" class="fw-semibold text-decoration-none">
-                                            #{{ $cand->candidateIssue->id }} — {{ $cand->candidateIssue->title }}
+                                        <a href="{{ route('issues.show', ['project' => $project, 'issue' => $cand->candidateIssue]) }}" class="di-issue-link">
+                                            <span class="d-block small text-muted">Issue #{{ $cand->candidateIssue->id }}</span>
+                                            <span class="d-block">{{ $cand->candidateIssue->title }}</span>
                                         </a>
-                                        <div class="small text-muted">Status: {{ $cand->candidateIssue->status }} | Vote: {{ $cand->candidateIssue->vote_count }}</div>
+                                        <div class="di-issue-meta"><span>Status: {{ $cand->candidateIssue->status }}</span><span>Vote: {{ $cand->candidateIssue->vote_count }}</span></div>
                                     </td>
                                     <td>
                                         <span class="badge text-bg-primary">
@@ -151,7 +153,7 @@
                                             <div>{{ $cand->decidedBy?->name ?? 'User #' . $cand->decided_by }}</div>
                                             <div class="text-muted">{{ $cand->decided_at }}</div>
                                         @else
-                                            <span class="text-muted">—</span>
+                                            <span class="text-muted">Belum ditinjau</span>
                                         @endif
                                     </td>
                                     <td class="text-end">
