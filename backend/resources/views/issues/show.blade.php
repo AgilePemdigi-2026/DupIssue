@@ -3,7 +3,7 @@
 @section('title', 'Detail Issue — DupIssue')
 
 @section('content')
-<div class="card shadow-sm">
+<div class="card shadow-sm di-issue-detail">
     <div class="card-body">
         @if (session('success') && ! view()->exists('layouts.app'))
             <div class="alert alert-success" role="status">{{ session('success') }}</div>
@@ -18,7 +18,7 @@
             <p><strong>Status deteksi NLP:</strong> <span id="issue-detection-status-value">{{ $issue->detection_status }}</span></p>
             <p><strong>Asal data:</strong> {{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</p>
             <p><strong>Jumlah vote:</strong> <span id="issue-vote-count-value">{{ (int) $issue->vote_count }}</span></p>
-            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2 di-actions">
                 <button type="button" class="btn btn-outline-primary btn-sm" id="issue-status-refresh">Muat Ulang</button>
                 <button type="button" class="btn btn-warning btn-sm d-none" id="issue-status-retry">Coba Lagi</button>
                 <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-secondary btn-sm">Kembali ke Daftar</a>
