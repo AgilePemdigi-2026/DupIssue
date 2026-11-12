@@ -210,11 +210,11 @@
                 ).format(percentage);
 
                 const card = document.createElement("article");
-                card.className = "border rounded-3 p-3 mb-3 bg-white";
+                card.className = "di-rec-card";
 
                 const header = document.createElement("div");
                 header.className =
-                    "d-flex justify-content-between align-items-center gap-2 mb-2";
+                    "di-rec-topline d-flex justify-content-between align-items-center gap-2 mb-2";
 
                 const issueId = document.createElement("span");
                 issueId.className = "small text-muted";
@@ -242,7 +242,7 @@
 
                 const score = document.createElement("div");
                 score.className =
-                    "d-flex justify-content-between small mb-1";
+                    "di-rec-score d-flex justify-content-between small mb-1";
 
                 const scoreLabel = document.createElement("span");
                 scoreLabel.textContent = "Sinyal kemiripan positif";
@@ -276,7 +276,7 @@
                 const detailButton = document.createElement("button");
                 detailButton.type = "button";
                 detailButton.className =
-                    "btn btn-sm btn-outline-primary mt-3";
+                    "btn btn-sm btn-outline-primary";
                 detailButton.textContent = "Lihat Detail";
 
                 detailButton.addEventListener("click", () => {
