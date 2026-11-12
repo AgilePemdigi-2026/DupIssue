@@ -3,13 +3,13 @@
 @section('title', 'Bandingkan Issue — #' . $source->id . ' & #' . $suggested->id)
 
 @section('content')
-<div class="container py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+<div class="di-review-page">
+    <div class="di-page-header">
         <div>
             <h1 class="h3 mb-1">Bandingkan Pasangan Issue</h1>
             <p class="text-muted mb-0">Project: <strong>{{ $project->name }}</strong> | Skor Kemiripan NLP: <span class="badge text-bg-primary fs-6">{{ number_format($candidate->similarity_score * 100, 2, ',', '.') }}%</span></p>
         </div>
-        <div>
+        <div class="di-toolbar-actions">
             <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-outline-secondary btn-sm">Kembali ke Daftar Kandidat</a>
             <a href="{{ route('issues.show', ['project' => $project, 'issue' => $source]) }}" class="btn btn-outline-primary btn-sm">Detail Issue Sumber</a>
         </div>
