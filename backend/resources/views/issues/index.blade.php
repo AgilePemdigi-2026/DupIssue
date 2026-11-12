@@ -5,12 +5,12 @@
 @section('content')
 <div class="card shadow-sm border-0">
     <div class="card-body p-4">
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3 di-page-header">
             <div>
                 <h1 class="h4 fw-bold mb-1">Daftar Issue</h1>
                 <p class="text-muted mb-0">Project: {{ $project->name }}</p>
             </div>
-            <div class="d-flex flex-wrap gap-2">
+            <div class="d-flex flex-wrap gap-2 di-toolbar-actions">
                 @if (auth()->user()?->role === 'MAINTAINER' && (int) $project->owner_id === (int) auth()->id())
                     <a class="btn btn-warning btn-sm" href="{{ route('projects.duplicates.index', ['project' => $project]) }}">
                         Review Kandidat Duplikat
@@ -23,7 +23,7 @@
             </div>
         </div>
 
-        <form method="GET" action="{{ route('issues.index', ['project' => $project]) }}" class="border rounded p-3 mb-4" role="search">
+        <form method="GET" action="{{ route('issues.index', ['project' => $project]) }}" class="border rounded p-3 mb-4 di-filter-panel" role="search">
             <div class="row g-3 align-items-end">
                 <div class="col-md-7">
                     <label for="cari" class="form-label">Cari judul atau deskripsi issue</label>
@@ -41,7 +41,7 @@
                     </select>
                     @error('status') <div class="invalid-feedback">{{ $message }}</div> @enderror
                 </div>
-                <div class="col-md-2 d-grid gap-2">
+                <div class="col-md-2 di-filter-actions">
                     <button class="btn btn-primary" type="submit">Cari</button>
                     <a class="btn btn-outline-secondary" href="{{ route('issues.index', ['project' => $project]) }}">Reset Filter</a>
                 </div>
@@ -60,7 +60,7 @@
             </div>
         @else
             <div class="table-responsive" id="issue_list">
-                <table class="table table-hover align-middle">
+                <table class="table table-hover align-middle di-table-issues">
                     <thead>
                         <tr>
                             <th scope="col">ID</th>
@@ -97,10 +97,10 @@
                                         @endif
                                     @endif
                                 </td>
-                                <td>{{ $issue->status }}</td>
+                                <td><span class="badge bg-light text-dark border">{{ $issue->status }}</span></td>
                                 <td>{{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</td>
                                 <td>{{ (int) $issue->vote_count }}</td>
-                                <td>{{ $issue->detection_status }}</td>
+                                <td><span class="badge bg-light text-dark border">{{ $issue->detection_status }}</span></td>
                                 <td>
                                     <a class="btn btn-outline-primary btn-sm" href="{{ route('issues.show', ['project' => $project, 'issue' => $issue]) }}">
                                         Lihat Detail
