@@ -14,8 +14,12 @@
         .btn-primary:hover { background:#59339d; border-color:#59339d; }
         .form-control:focus { border-color:#a78bfa; box-shadow:0 0 0 .2rem rgba(111,66,193,.16); }
     </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ asset('css/dupissue-polish.css') }}?v=20261112">
 </head>
-<body>
+<body class="di-auth">
 <main class="container min-vh-100 d-flex align-items-center justify-content-center py-5">
     <div class="card auth-card shadow-sm"><div class="card-body p-4 p-md-5">
         <div class="text-center mb-4">

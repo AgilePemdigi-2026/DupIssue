@@ -30,6 +30,10 @@
             color: #6f42c1 !important;
         }
     </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ asset('css/dupissue-polish.css') }}?v=20261112">
 </head>
 <body class="di-app bg-light min-vh-100 d-flex flex-column">
     <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom shadow-sm">

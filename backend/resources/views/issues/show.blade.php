@@ -3,7 +3,7 @@
 @section('title', 'Detail Issue — DupIssue')
 
 @section('content')
-<div class="card shadow-sm">
+<div class="card shadow-sm di-issue-detail">
     <div class="card-body">
         @if (session('success') && ! view()->exists('layouts.app'))
             <div class="alert alert-success" role="status">{{ session('success') }}</div>
@@ -11,15 +11,67 @@
         <h1 class="h4">{{ $issue->title }}</h1>
         <p class="text-muted">Project: {{ $project->name }}</p>
         <p>{{ $issue->description }}</p>
-        <p><strong>Status:</strong> {{ $issue->status }}</p>
-        <p><strong>Status deteksi NLP:</strong> {{ $issue->detection_status }}</p>
+        <section id="issue-status-detail"
+                 data-read-url="{{ route('issues.status.read', ['project' => $project, 'issue' => $issue]) }}"
+                 data-parent-relation="{{ $issue->duplicate_of === null ? 'none' : ($parentIssue ? 'valid:'.$parentIssue->id : 'invalid') }}">
+            <p><strong>Status:</strong> <span id="issue-status-value">{{ $issue->status }}</span></p>
+            <p><strong>Status deteksi NLP:</strong> <span id="issue-detection-status-value">{{ $issue->detection_status }}</span></p>
+            <p><strong>Asal data:</strong> {{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</p>
+            <p><strong>Jumlah vote:</strong> <span id="issue-vote-count-value">{{ (int) $issue->vote_count }}</span></p>
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2 di-actions">
+                <button type="button" class="btn btn-outline-primary btn-sm" id="issue-status-refresh">Muat Ulang</button>
+                <button type="button" class="btn btn-warning btn-sm d-none" id="issue-status-retry">Coba Lagi</button>
+                <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-outline-secondary btn-sm">Kembali ke Daftar</a>
+            </div>
+            <p id="issue-status-feedback" role="status" aria-live="polite" class="small mb-1"></p>
+            <p id="issue-status-stale" class="small text-warning d-none" role="status">Data lama belum diperbarui.</p>
+        </section>
         @if (session('status_notice'))
             <div class="alert alert-info" role="status">{{ session('status_notice') }}</div>
         @endif
+        @if ($votingIssue)
+        <div class="border rounded p-3 my-4">
+            <h2 class="h5 mb-1">Vote Issue</h2>
+            @if ($votingIssue->id !== $issue->id)
+                <p class="text-muted mb-1">
+                    Vote dicatat pada issue induk #{{ $votingIssue->id }}.
+                </p>
+            @endif
+            <p class="text-muted mb-2">
+                Jumlah Vote:
+                <strong>{{ number_format((int) $votingIssue->vote_count) }}</strong>
+            </p>
+            @if ($canVote)
+                @if ($hasVoted)
+                    <form method="POST" action="{{ route('issues.unvote', ['project' => $project, 'issue' => $issue]) }}">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Apakah kamu yakin ingin membatalkan vote?')">Batalkan Vote</button>
+                    </form>
+                @else
+                    <form method="POST" action="{{ route('issues.vote', ['project' => $project, 'issue' => $issue]) }}">
+                        @csrf
+                        <button type="submit" class="btn btn-primary">Vote Issue</button>
+                    </form>
+                @endif
+            @endif
+            <p class="text-muted small mt-2 mb-0">
+                Kamu hanya dapat memberikan satu vote untuk setiap issue.
+                Vote dapat dibatalkan kapan saja.
+            </p>
+        </div>
+        @else
+            <div class="alert alert-warning" role="status">Voting tidak tersedia karena relasi issue induk tidak valid.</div>
+        @endif
+
         @if ($issue->duplicate_of)
             <div class="alert alert-warning" role="status">
                 Issue ini telah ditandai sebagai duplikat.
-                <a href="{{ route('issues.show', ['project' => $project, 'issue' => $issue->duplicate_of]) }}">Issue Induk #{{ $issue->duplicate_of }}</a>
+                @if ($parentIssue)
+                    <a href="{{ route('issues.show', ['project' => $project, 'issue' => $parentIssue]) }}">Issue Induk</a> #{{ $parentIssue->id }}
+                @else
+                    <span>Issue induk tidak tersedia.</span>
+                @endif
             </div>
             @if (auth()->user()->role === 'MAINTAINER' && (int) $project->owner_id === (int) auth()->id())
                 <form action="{{ route('issues.duplicates.cancel', ['project' => $project, 'issue' => $issue]) }}" method="POST" class="border rounded p-3 mb-3">
@@ -135,21 +187,34 @@
                 @endforeach
             </ul>
         @endif
-        @if ($statusHistory->isNotEmpty())
-            <h2 class="h6 mt-4">Riwayat Status</h2>
-            <ul class="list-group mb-3">
-                @foreach ($statusHistory as $entry)
+        <section id="issue-status-history" aria-label="Riwayat perubahan status">
+            <h2 class="h6 mt-4">Riwayat perubahan status</h2>
+            <ul class="list-group mb-3" id="issue-status-history-list">
+                @forelse ($statusHistory as $entry)
                     <li class="list-group-item">
-                        <strong>{{ $entry->action }}</strong> · {{ $entry->created_at }}
-                        @if ($entry->reason)<p class="mb-0">{{ $entry->reason }}</p>@endif
+                        <strong>
+                            @if ($entry->from_status && $entry->to_status)
+                                {{ $entry->from_status }} → {{ $entry->to_status }}
+                            @else
+                                {{ $entry->action }}
+                            @endif
+                        </strong>
+                        <span class="text-muted small"> · {{ $entry->created_at }} · {{ $entry->action }}</span>
+                        @if ($entry->reason)<p class="mb-0">Alasan: {{ $entry->reason }}</p>@endif
                     </li>
-                @endforeach
+                @empty
+                    <li class="list-group-item text-muted">Belum ada riwayat perubahan status.</li>
+                @endforelse
             </ul>
-        @endif
+        </section>
         @if (auth()->user()->role === 'REPORTER')
             <a href="{{ route('issues.create', ['project' => $project]) }}" class="btn btn-outline-primary">Buat Issue Lagi</a>
         @endif
         @include('issues.project-link', ['label' => 'Kembali ke Project'])
     </div>
 </div>
+@endsection
+
+@section('scripts')
+<script src="{{ asset('js/issue-status-refresh.js') }}" defer></script>
 @endsection

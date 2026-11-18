@@ -9,6 +9,10 @@ use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\ProjectMemberController;
+use App\Models\Project;
+use App\Services\ProjectService;
+use Illuminate\Http\Request;
+use App\Http\Controllers\VoteController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -53,7 +57,7 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [LoginController::class, 'authenticate'])
         ->middleware('throttle:5,1')
         ->name('login.authenticate');
-    
+
     // FORGOT PASSWORD - OTP
 
     Route::get('/forgot-password',
@@ -136,8 +140,45 @@ Route::middleware('auth')->group(function () {
         ->name('issues.recommendations');
     Route::get('/projects/{project}/issues', [IssueController::class, 'index'])
         ->name('issues.index');
+
+    Route::get('/projects/{project}/issues/{issue}/status', [IssueController::class, 'readStatus'])
+        ->name('issues.status.read');
+
     Route::get('/projects/{project}/issues/{issue}', [IssueController::class, 'show'])
-        ->name('issues.show');
+        ->name('issues.show')
+        ->missing(static function (Request $request) {
+            $project = $request->route('project');
+            if (! $project instanceof Project) {
+                abort(404);
+            }
+
+            // Do not reveal whether an issue exists to unauthorised users.
+            $user = $request->user();
+            abort_unless($user && app(ProjectService::class)->canAccessProject($user, $project),
+                403, 'Akses tidak tersedia');
+            if ($user->role === 'REPORTER') {
+                abort_unless($project->memberships()->where('user_id', $user->id)
+                    ->where('is_active', true)->exists(), 403, 'Akses tidak tersedia');
+            }
+            return response()->view('issues.not-found', compact('project'), 404);
+        });
+    // Feature 9 / Issue #46 — only authenticated Reporters may vote.
+    Route::post('/projects/{project}/issues/{issue}/vote', [VoteController::class, 'store'])
+        ->middleware('role:REPORTER')
+        ->name('issues.vote');
+    Route::delete('/projects/{project}/issues/{issue}/vote', [VoteController::class, 'destroy'])
+        ->middleware('role:REPORTER')
+        ->name('issues.unvote');
+
+    // REQ-05 — Duplicate Review routes (MAINTAINER only)
+    Route::get('/projects/{project}/duplicates',
+        [DuplicateReviewController::class, 'index'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.duplicates.index');
+    Route::get('/projects/{project}/issues/{issue}/candidates/{candidate}/compare',
+        [DuplicateReviewController::class, 'compare'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.duplicates.compare');
     Route::post('/projects/{project}/issues/{issue}/candidates/{candidate}/decision',
         [DuplicateReviewController::class, 'decide'])
         ->middleware('role:MAINTAINER')
@@ -146,6 +187,10 @@ Route::middleware('auth')->group(function () {
         [DuplicateReviewController::class, 'cancel'])
         ->middleware('role:MAINTAINER')
         ->name('issues.duplicates.cancel');
+    Route::post('/projects/{project}/issues/{issue}/detection/retry',
+        [DuplicateReviewController::class, 'retry'])
+        ->middleware('role:MAINTAINER')
+        ->name('issues.detection.retry');
     Route::post('/projects/{project}/issues/{issue}/status/preview',
         [IssueStatusController::class, 'preview'])
         ->middleware('role:MAINTAINER')

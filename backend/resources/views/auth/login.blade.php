@@ -44,9 +44,13 @@
             border-color: #59339d;
         }
     </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ asset('css/dupissue-polish.css') }}?v=20261112">
 </head>
 
-<body>
+<body class="di-auth">
     <div class="container min-vh-100 d-flex align-items-center justify-content-center py-5">
 
         <div class="card login-card shadow-sm">

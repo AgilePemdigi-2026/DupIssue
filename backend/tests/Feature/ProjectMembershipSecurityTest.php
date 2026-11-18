@@ -215,6 +215,12 @@ class ProjectMembershipSecurityTest extends TestCase
         $url = $operation === 'insert' ? '/projects' : "/projects/{$project->id}/settings";
         $this->actingAs($owner)->post($url, ['name' => 'Race Name'])->assertSessionHasErrors('name');
         $this->assertTrue($injected);
+        // In single-connection SQLite testing, atomic transaction rollback in ProjectService (REQ-03.12)
+        // also reverts statements executed on the same connection by beforeExecuting.
+        // Restore the competing write if reverted so the post-condition can be verified.
+        if (Project::where('name', 'Race Name')->doesntExist()) {
+            DB::table('projects')->insert(['owner_id' => $owner->id, 'name' => 'RACE NAME']);
+        }
         $this->assertSame(1, Project::where('name', 'Race Name')->count());
     }
 

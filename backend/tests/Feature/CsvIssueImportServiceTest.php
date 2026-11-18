@@ -266,7 +266,7 @@ class CsvIssueImportServiceTest extends TestCase
             "BUG-FAIL,Dashboard error,Dashboard tidak bisa dibuka\n"
         );
 
-        
+
         try {
             $this->importer()->import(
                 $project,
