@@ -93,6 +93,89 @@ class GithubApiClientTest extends TestCase
         Http::assertSentCount(2);
     }
 
+    public function test_fetches_five_pages_without_exceeding_limit(): void
+    {
+        Http::fake(function (Request $request) {
+            parse_str(
+                (string) parse_url($request->url(), PHP_URL_QUERY),
+                $query
+            );
+
+            $page = (int) ($query['page'] ?? 1);
+
+            $headers = $page < 5
+                ? [
+                    'Link' => '<https://api.github.com/repos/demo/bugs/issues?page='
+                        . ($page + 1) . '>; rel="next"',
+                ]
+                : [];
+
+            return Http::response([
+                [
+                    'number' => $page,
+                    'title' => "Issue {$page}",
+                ],
+            ], 200, $headers);
+        });
+
+        $issues = (new GithubApiClient())
+            ->fetchIssues('demo/bugs', 'dummy-token');
+
+        $this->assertSame(
+            [1, 2, 3, 4, 5],
+            array_column($issues, 'number')
+        );
+
+        Http::assertSentCount(5);
+    }
+
+    public function test_rejects_pagination_beyond_five_pages(): void
+    {
+        Http::fake(function (Request $request) {
+            parse_str(
+                (string) parse_url($request->url(), PHP_URL_QUERY),
+                $query
+            );
+
+            $page = (int) ($query['page'] ?? 1);
+
+            $headers = $page <= 5
+                ? [
+                    'Link' => '<https://api.github.com/repos/demo/bugs/issues?page='
+                        . ($page + 1) . '>; rel="next"',
+                ]
+                : [];
+
+            return Http::response([
+                [
+                    'number' => $page,
+                    'title' => "Issue {$page}",
+                ],
+            ], 200, $headers);
+        });
+
+        $caught = null;
+
+        try {
+            (new GithubApiClient())
+                ->fetchIssues('demo/bugs', 'dummy-token');
+        } catch (RuntimeException $exception) {
+            $caught = $exception;
+        }
+
+        $this->assertNotNull(
+            $caught,
+            'Repository exceeding five pages was accepted.'
+        );
+
+        $this->assertStringContainsString(
+            '500',
+            $caught->getMessage()
+        );
+
+        Http::assertSentCount(5);
+    }
+
     public function test_invalid_repository_format_is_rejected(): void
     {
         Http::fake();

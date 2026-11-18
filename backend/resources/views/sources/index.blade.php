@@ -8,8 +8,11 @@
     // Buka tab GitHub ketika OAuth baru selesai
     // atau koneksi GitHub App sudah tersedia.
     $githubAppTabActive =
-        !empty($githubAppVerifiedRepositories)
-        || !empty($githubAppRepoFullName);
+        empty($csvPreview)
+        && (
+            !empty($githubAppVerifiedRepositories)
+            || !empty($githubAppRepoFullName)
+        );
 @endphp
 
 <!-- Header Halaman -->

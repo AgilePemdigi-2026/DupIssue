@@ -451,8 +451,7 @@ class SourceIssueController extends Controller
             Storage::disk('local')->delete($previous['path']);
         }
 
-        return view('sources.index', [
-            'project' => $project,
+        return $this->index($request, $project)->with([
             'csvPreview' => $result,
             'csvOriginalFileName' => $file->getClientOriginalName(),
         ]);

@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\SourceIssueController;
+use App\Models\GithubAppConnection;
+use App\Models\GithubConfig;
 use App\Models\Membership;
 use App\Models\Project;
 use App\Models\User;
@@ -250,6 +252,193 @@ class SourceIssueControllerTest extends TestCase
         $this->assertDatabaseCount('issues', 0);
         $this->assertDatabaseCount('import_batches', 0);
         $this->assertDatabaseCount('activity_logs', 0);
+    }
+
+    public function test_csv_preview_preserves_saved_github_app_and_pat(): void
+    {
+        Storage::fake('local');
+
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+
+        $pat = 'fake-pat-must-not-be-rendered';
+
+        $config = new GithubConfig();
+        $config->project_id = $project->id;
+        $config->repo_full_name = 'demo/manual-repo';
+        $config->pat_encrypted = $pat;
+        $config->save();
+
+        $connection = new GithubAppConnection();
+        $connection->project_id = $project->id;
+        $connection->installation_id = 12345;
+        $connection->repository_id = 5678;
+        $connection->repo_full_name = 'example/app-repo';
+        $connection->verified_github_user_id = 999;
+        $connection->verified_at = now();
+        $connection->save();
+
+        $file = UploadedFile::fake()->createWithContent(
+            'dataset.csv',
+            "source_id,title,description\n"
+            . "BUG-001,Login gagal,Pengguna tidak bisa masuk aplikasi\n"
+        );
+
+        $response = $this->actingAs($owner)->post(
+            route('test.sources.csv.preview', [
+                'project' => $project->id,
+            ]),
+            ['file' => $file]
+        );
+
+        $response->assertOk()
+            ->assertViewIs('sources.index')
+            ->assertViewHas('githubRepoFullName', 'demo/manual-repo')
+            ->assertViewHas('githubAppRepoFullName', 'example/app-repo')
+            ->assertSee(
+                'data-connected-repo="demo/manual-repo"',
+                false
+            )
+            ->assertSee('example/app-repo')
+            ->assertSee('id="github-app-operations"', false)
+            ->assertDontSee($pat);
+
+        $html = $response->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '~<button\s+class="nav-link active"\s+id="csv-tab"'
+            . '[^>]*aria-selected="true"~s',
+            $html
+        );
+
+        $this->assertMatchesRegularExpression(
+            '~<div\s+class="tab-pane fade show active"'
+            . '\s+id="csv-panel"~s',
+            $html
+        );
+
+        $this->assertMatchesRegularExpression(
+            '~<button\s+class="nav-link"\s+id="github-tab"'
+            . '[^>]*aria-selected="false"~s',
+            $html
+        );
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('github_configs', 1);
+        $this->assertDatabaseCount('github_app_connections', 1);
+    }
+
+    public function test_csv_preview_preserves_verified_github_app_repositories(): void
+    {
+        Storage::fake('local');
+
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+
+        $repositories = [
+            [
+                'id' => 5678,
+                'full_name' => 'example/verified-repo',
+            ],
+        ];
+
+        $verifiedSession = [
+            'project_id' => (int) $project->id,
+            'actor_id' => (int) $owner->id,
+            'installation_id' => 12345,
+            'github_user_id' => 999,
+            'repositories' => $repositories,
+            'expires_at' => now()->addMinutes(10)->timestamp,
+        ];
+
+        $file = UploadedFile::fake()->createWithContent(
+            'dataset.csv',
+            "source_id,title,description\n"
+            . "BUG-001,Login gagal,Pengguna tidak bisa masuk aplikasi\n"
+        );
+
+        $response = $this->actingAs($owner)
+            ->withSession([
+                'source_issue.github_app_verified_repositories'
+                    => $verifiedSession,
+            ])
+            ->post(
+                route('test.sources.csv.preview', [
+                    'project' => $project->id,
+                ]),
+                ['file' => $file]
+            );
+
+        $response->assertOk()
+            ->assertViewIs('sources.index')
+            ->assertViewHas(
+                'githubAppVerifiedRepositories',
+                $repositories
+            )
+            ->assertSee('example/verified-repo')
+            ->assertSee('value="5678"', false);
+
+        $html = $response->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '~<button\s+class="nav-link active"\s+id="csv-tab"'
+            . '[^>]*aria-selected="true"~s',
+            $html
+        );
+
+        $this->assertMatchesRegularExpression(
+            '~<div\s+class="tab-pane fade show active"'
+            . '\s+id="csv-panel"~s',
+            $html
+        );
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('github_app_connections', 0);
+    }
+
+    public function test_csv_preview_preserves_saved_github_connection(): void
+    {
+        Storage::fake('local');
+
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+
+        $pat = 'dummy-pat-must-not-appear-in-html';
+
+        $config = new GithubConfig();
+        $config->project_id = $project->id;
+        $config->repo_full_name = 'demo/bugs';
+        $config->pat_encrypted = $pat;
+        $config->save();
+
+        $file = UploadedFile::fake()->createWithContent(
+            'dataset.csv',
+            "source_id,title,description\n"
+            . "BUG-001,Login gagal,Pengguna tidak bisa masuk aplikasi\n"
+        );
+
+        $response = $this->actingAs($owner)->post(
+            route('test.sources.csv.preview', [
+                'project' => $project->id,
+            ]),
+            ['file' => $file]
+        );
+
+        $response->assertOk()
+            ->assertViewIs('sources.index')
+            ->assertViewHas('githubRepoFullName', 'demo/bugs')
+            ->assertSee('data-connected-repo="demo/bugs"', false)
+            ->assertSee('value="demo/bugs"', false)
+            ->assertDontSee($pat);
+
+        $this->assertSame(
+            $pat,
+            $config->fresh()->pat_encrypted
+        );
+
+        $this->assertDatabaseCount('github_configs', 1);
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
     }
 
     public function test_invalid_file_is_rejected_without_storage(): void

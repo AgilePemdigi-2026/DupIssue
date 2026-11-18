@@ -30,8 +30,8 @@
                 @endif
 
                 <form id="issue-submit-form"
-                      action="{{ route('issues.store', ['project' => $project]) }}"
-                      data-recommendations-url="{{ route('issues.recommendations', ['project' => $project]) }}"
+                      action="{{ route('issues.store', ['project' => $project], false) }}"
+                      data-recommendations-url="{{ route('issues.recommendations', ['project' => $project], false) }}"
                       method="POST">
                     @csrf
 

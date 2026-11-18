@@ -105,6 +105,16 @@ class GithubApiClient
             $linkHeader = (string) $response->header('Link', '');
             $hasNextPage = str_contains($linkHeader, 'rel="next"');
 
+            if ($hasNextPage && $page >= 5) {
+                throw new RuntimeException(
+                    'GitHub repository exceeds the limit of '
+                    . '500 API items (5 pages) per operation. '
+                    . 'The issue list was not imported. '
+                    . 'Please use a smaller repository.',
+                    422
+                );
+            }
+
             $page++;
         } while ($hasNextPage);
 
