@@ -4,6 +4,14 @@
 
 @section('content')
 
+@php
+    // Buka tab GitHub ketika OAuth baru selesai
+    // atau koneksi GitHub App sudah tersedia.
+    $githubAppTabActive =
+        !empty($githubAppVerifiedRepositories)
+        || !empty($githubAppRepoFullName);
+@endphp
+
 <!-- Header Halaman -->
 <div class="mb-4">
     <a href="{{ route('projects.show', ['id' => $project->id]) }}"
@@ -34,28 +42,28 @@
             role="tablist">
 
             <li class="nav-item" role="presentation">
-                <button class="nav-link active"
+                <button class="{{ $githubAppTabActive ? 'nav-link' : 'nav-link active' }}"
                         id="csv-tab"
                         data-bs-toggle="tab"
                         data-bs-target="#csv-panel"
                         type="button"
                         role="tab"
                         aria-controls="csv-panel"
-                        aria-selected="true">
+                        aria-selected="{{ $githubAppTabActive ? 'false' : 'true' }}">
                     <i class="bi bi-file-earmark-arrow-up me-2"></i>
                     Upload Dataset
                 </button>
             </li>
 
             <li class="nav-item" role="presentation">
-                <button class="nav-link"
+                <button class="{{ $githubAppTabActive ? 'nav-link active' : 'nav-link' }}"
                         id="github-tab"
                         data-bs-toggle="tab"
                         data-bs-target="#github-panel"
                         type="button"
                         role="tab"
                         aria-controls="github-panel"
-                        aria-selected="false">
+                        aria-selected="{{ $githubAppTabActive ? 'true' : 'false' }}">
                     <i class="bi bi-github me-2"></i>
                     GitHub
                 </button>
@@ -68,7 +76,7 @@
             <!-- TAB 1: UPLOAD DATASET CSV               -->
             <!-- ======================================= -->
 
-            <div class="tab-pane fade show active"
+            <div class="{{ $githubAppTabActive ? 'tab-pane fade' : 'tab-pane fade show active' }}"
                  id="csv-panel"
                  role="tabpanel"
                  aria-labelledby="csv-tab"
@@ -529,7 +537,7 @@
             <!-- TAB 2: GITHUB                           -->
             <!-- ======================================= -->
 
-            <div class="tab-pane fade"
+            <div class="{{ $githubAppTabActive ? 'tab-pane fade show active' : 'tab-pane fade' }}"
                  id="github-panel"
                  data-connected-repo="{{ $githubRepoFullName ?? '' }}"
                  data-test-url="{{ route('sources.github.test', ['project' => $project->id]) }}"
@@ -547,6 +555,221 @@
                 <p class="text-muted small mb-4">
                     Hubungkan repository untuk mengambil issue
                     melalui GitHub REST API.
+                </p>
+
+                <!-- Integrasi GitHub App tanpa PAT -->
+                <section id="github-app-section"
+                         class="border rounded-3 p-4 mb-4"
+                         aria-labelledby="github-app-heading">
+
+                    <h3 id="github-app-heading"
+                        class="h5 fw-bold mb-2">
+                        Hubungkan dengan GitHub App
+                    </h3>
+
+                    <p class="text-muted small">
+                        Otorisasi melalui GitHub tanpa memasukkan
+                        Personal Access Token (PAT) secara manual.
+                    </p>
+
+                    @if(!empty($githubAppRepoFullName))
+                        <div class="alert alert-success small"
+                             role="status">
+                            <strong>Koneksi tersimpan:</strong>
+                            {{ $githubAppRepoFullName }}
+                        </div>
+                    @else
+                        <div class="alert alert-secondary small"
+                             role="status">
+                            Belum ada koneksi GitHub App
+                            untuk project ini.
+                        </div>
+                    @endif
+
+                    @if(!empty($githubAppVerifiedRepositories))
+                        <div class="border rounded p-3 mb-3">
+                            <h4 class="h6 fw-semibold mb-2">
+                                Pilih Repository
+                            </h4>
+
+                            <p class="text-muted small">
+                                Repository berikut telah diperiksa
+                                melalui otorisasi GitHub.
+                                Pilih satu repository untuk project ini.
+                            </p>
+
+                            <form method="POST"
+                                  action="{{ route('sources.github.app.save', [
+                                      'project' => $project->id
+                                  ]) }}">
+                                @csrf
+
+                                <label for="github-app-repository"
+                                       class="form-label">
+                                    Repository GitHub
+                                </label>
+
+                                <select id="github-app-repository"
+                                        name="repository_id"
+                                        class="form-select mb-3"
+                                        required>
+                                    @foreach($githubAppVerifiedRepositories as $repository)
+                                        <option value="{{ $repository['id'] }}">
+                                            {{ $repository['full_name'] }}
+                                        </option>
+                                    @endforeach
+                                </select>
+
+                                <button type="submit"
+                                        class="btn btn-primary">
+                                    <i class="bi bi-check-circle me-1"></i>
+                                    Simpan Koneksi GitHub App
+                                </button>
+                            </form>
+                        </div>
+                    @endif
+
+                    <form method="POST"
+                          action="{{ route('sources.github.app.connect', [
+                              'project' => $project->id
+                          ]) }}">
+                        @csrf
+
+                        <button type="submit"
+                                class="btn btn-outline-primary">
+                            <i class="bi bi-github me-1"></i>
+                            {{ !empty($githubAppRepoFullName)
+                                ? 'Hubungkan Repository Lain'
+                                : 'Hubungkan GitHub App' }}
+                        </button>
+                    </form>
+
+                    <p class="text-muted small mt-3 mb-0">
+                        Instalasi dan izin akses dikelola melalui GitHub.
+                        Issue hanya akan diimpor setelah pratinjau
+                        dan konfirmasi.
+                    </p>
+                    @if(!empty($githubAppRepoFullName))
+
+                        <!-- Preview dan Import GitHub App -->
+                        <div id="github-app-operations"
+                             class="border-top mt-4 pt-4"
+                             data-preview-url="{{ route('sources.github.app.preview', ['project' => $project->id]) }}"
+                             data-import-url="{{ route('sources.github.app.import', ['project' => $project->id]) }}">
+
+                            <form id="github-app-operations-form">
+                                @csrf
+
+                                <button type="button"
+                                        id="github-app-preview-btn"
+                                        class="btn btn-outline-primary"
+                                        disabled>
+                                    <i class="bi bi-arrow-repeat me-1"></i>
+                                    Ambil Issue melalui GitHub App
+                                </button>
+                            </form>
+
+                            <div id="github-app-feedback"
+                                 class="alert d-none mt-3"
+                                 role="status"
+                                 aria-live="polite">
+                            </div>
+
+                            <section id="github-app-preview-section"
+                                     class="mt-4 d-none"
+                                     aria-labelledby="github-app-preview-heading">
+
+                                <h4 id="github-app-preview-heading"
+                                    class="h6 fw-bold mb-3">
+                                    Pratinjau Issue GitHub App
+                                </h4>
+
+                                <div class="row g-3 mb-4">
+
+                                    <div class="col-sm-6 col-lg-3">
+                                        <div class="border rounded p-3">
+                                            <div class="small text-muted">
+                                                Total Issue
+                                            </div>
+                                            <div id="github-app-total-count"
+                                                 class="fs-4 fw-bold">0</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-sm-6 col-lg-3">
+                                        <div class="border rounded p-3">
+                                            <div class="small text-muted">
+                                                Valid Baru
+                                            </div>
+                                            <div id="github-app-valid-count"
+                                                 class="fs-4 fw-bold text-success">0</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-sm-6 col-lg-3">
+                                        <div class="border rounded p-3">
+                                            <div class="small text-muted">
+                                                Invalid
+                                            </div>
+                                            <div id="github-app-invalid-count"
+                                                 class="fs-4 fw-bold text-danger">0</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-sm-6 col-lg-3">
+                                        <div class="border rounded p-3">
+                                            <div class="small text-muted">
+                                                Sudah Diimpor
+                                            </div>
+                                            <div id="github-app-imported-count"
+                                                 class="fs-4 fw-bold">0</div>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <div class="table-responsive">
+                                    <table class="table table-bordered table-hover align-middle small">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th scope="col">No.</th>
+                                                <th scope="col">Issue</th>
+                                                <th scope="col">Status</th>
+                                                <th scope="col">Keterangan</th>
+                                                <th scope="col">Sumber</th>
+                                            </tr>
+                                        </thead>
+
+                                        <tbody id="github-app-preview-rows">
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div class="d-flex justify-content-end mt-3">
+                                    <button type="button"
+                                            id="github-app-import-btn"
+                                            class="btn btn-success"
+                                            disabled>
+                                        <i class="bi bi-check-circle me-1"></i>
+                                        Konfirmasi Impor
+                                    </button>
+                                </div>
+
+                            </section>
+                        </div>
+
+                    @endif
+
+                </section>
+
+                <!-- Koneksi PAT lama tetap tersedia -->
+                <h3 class="h6 fw-bold mb-2">
+                    Koneksi Manual (PAT)
+                </h3>
+
+                <p class="text-muted small">
+                    Metode koneksi lama tetap tersedia
+                    selama masa transisi GitHub App.
                 </p>
 
                 <!-- Form Koneksi GitHub -->
@@ -748,5 +971,6 @@
 
 <script src="{{ asset('js/github-connection.js') }}" defer></script>
 <script src="{{ asset('js/github-preview.js') }}" defer></script>
+<script src="{{ asset('js/github-app.js') }}" defer></script>
 
 @endsection

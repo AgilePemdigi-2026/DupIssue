@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Jobs\DetectIssueCandidatesJob;
 use App\Models\GithubConfig;
+use App\Models\GithubAppConnection;
 use App\Models\ImportBatch;
 use App\Models\Issue;
 use App\Models\Project;
@@ -39,9 +40,28 @@ class GithubIssueImportService
         int $expectedConfigId,
         string $expectedRepo,
         array $githubIssues,
-        string $expectedFingerprint
+        string $expectedFingerprint,
+        ?int $expectedInstallationId = null,
+        ?int $expectedRepositoryId = null
     ): array {
         $this->authorizeOwner($project, $actor);
+
+        $isAppConnection = $expectedInstallationId !== null
+            || $expectedRepositoryId !== null;
+
+        if (
+            $isAppConnection
+            && (
+                $expectedInstallationId === null
+                || $expectedRepositoryId === null
+                || $expectedInstallationId <= 0
+                || $expectedRepositoryId <= 0
+            )
+        ) {
+            throw ValidationException::withMessages([
+                'github' => 'Identitas instalasi GitHub App tidak valid.',
+            ]);
+        }
 
         if (! preg_match(
             '/\A[a-f0-9]{64}\z/',
@@ -58,7 +78,10 @@ class GithubIssueImportService
             $expectedConfigId,
             $expectedRepo,
             $githubIssues,
-            $expectedFingerprint
+            $expectedFingerprint,
+            $isAppConnection,
+            $expectedInstallationId,
+            $expectedRepositoryId
         ): array {
             // Serialize imports for the same project.
             $lockedProject = Project::query()
@@ -68,8 +91,12 @@ class GithubIssueImportService
 
             $this->authorizeOwner($lockedProject, $actor);
 
-            // Lock and verify the current GitHub configuration.
-            $config = GithubConfig::query()
+            // Lock dan verifikasi koneksi sesuai jenis autentikasi.
+            $configQuery = $isAppConnection
+                ? GithubAppConnection::query()
+                : GithubConfig::query();
+
+            $config = $configQuery
                 ->where('project_id', $lockedProject->id)
                 ->lockForUpdate()
                 ->first();
@@ -78,6 +105,15 @@ class GithubIssueImportService
                 $config === null
                 || (int) $config->id !== $expectedConfigId
                 || $config->repo_full_name !== $expectedRepo
+                || (
+                    $isAppConnection
+                    && (
+                        (int) $config->installation_id
+                            !== $expectedInstallationId
+                        || (int) $config->repository_id
+                            !== $expectedRepositoryId
+                    )
+                )
             ) {
                 throw ValidationException::withMessages([
                     'github' =>
@@ -176,8 +212,10 @@ class GithubIssueImportService
 
             // Update the synchronization timestamp only
             // after the import has been prepared successfully.
-            $config->last_synced_at = now();
-            $config->save();
+            if (! $isAppConnection) {
+                $config->last_synced_at = now();
+                $config->save();
+            }
 
             // Audit metadata only: never log the PAT or
             // complete GitHub issue descriptions.
@@ -218,6 +256,36 @@ class GithubIssueImportService
                 'issue_ids' => $issueIds,
             ];
         }, 3);
+    }
+
+    /**
+     * Import issue dari koneksi GitHub App yang terverifikasi.
+     * Menggunakan mekanisme transaksi dan fingerprint yang
+     * sama dengan impor GitHub PAT.
+     *
+     * @param array<int, mixed> $githubIssues
+     * @return array<string, mixed>
+     */
+    public function importFromApp(
+        Project $project,
+        User $actor,
+        int $expectedConnectionId,
+        int $expectedInstallationId,
+        int $expectedRepositoryId,
+        string $expectedRepo,
+        array $githubIssues,
+        string $expectedFingerprint
+    ): array {
+        return $this->import(
+            $project,
+            $actor,
+            $expectedConnectionId,
+            $expectedRepo,
+            $githubIssues,
+            $expectedFingerprint,
+            $expectedInstallationId,
+            $expectedRepositoryId
+        );
     }
 
     private function authorizeOwner(
