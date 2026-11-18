@@ -24,6 +24,9 @@
                             <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-warning">
                                 <i class="bi bi-intersect me-1"></i> Review Kandidat Duplikat
                             </a>
+                            <a href="{{ route('projects.activity.index', ['project' => $project]) }}" class="btn btn-outline-info">
+                                <i class="bi bi-clock-history me-1"></i> Riwayat &amp; Log
+                            </a>
                             <a href="/projects/{{ $project->id }}/members" class="btn btn-outline-primary">
                                 <i class="bi bi-people me-1"></i> Anggota Project
                             </a>
