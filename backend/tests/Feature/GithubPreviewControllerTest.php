@@ -7,6 +7,7 @@ use App\Models\Issue;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -231,6 +232,110 @@ class GithubPreviewControllerTest extends TestCase
             ->assertJsonPath('success', false);
 
         $this->assertDatabaseCount('issues', 0);
+    }
+
+    public function test_second_page_api_failure_does_not_save_partial_preview(): void
+    {
+        [$owner, $project] = $this->makeProject();
+
+        Http::fake(function (Request $request) {
+            parse_str(
+                (string) parse_url($request->url(), PHP_URL_QUERY),
+                $query
+            );
+
+            $page = (int) ($query['page'] ?? 1);
+
+            if ($page === 1) {
+                return Http::response([
+                    [
+                        'number' => 101,
+                        'title' => 'Tombol pembayaran tidak berfungsi',
+                        'body' => 'Tombol tidak merespons ketika diklik.',
+                    ],
+                ], 200, [
+                    'Link' => '<https://api.github.com/repos/demo/bugs/issues?page=2>; rel="next"',
+                ]);
+            }
+
+            return Http::response([
+                'message' => 'Internal Server Error',
+            ], 500);
+        });
+
+        $response = $this->withSession([
+            'source_issue.github_preview' => [
+                'fingerprint' => 'stale-preview',
+            ],
+        ])
+            ->actingAs($owner)
+            ->postJson(
+                route('sources.github.preview', $project)
+            );
+
+        $response->assertStatus(502)
+            ->assertJsonPath('success', false)
+            ->assertSessionMissing('source_issue.github_preview');
+
+        $this->assertArrayNotHasKey(
+            'preview',
+            $response->json()
+        );
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
+        $this->assertDatabaseCount('activity_logs', 0);
+
+        Http::assertSentCount(2);
+    }
+
+    public function test_repository_exceeding_page_limit_rejects_preview(): void
+    {
+        [$owner, $project] = $this->makeProject();
+
+        Http::fake(function (Request $request) {
+            parse_str(
+                (string) parse_url($request->url(), PHP_URL_QUERY),
+                $query
+            );
+
+            $page = (int) ($query['page'] ?? 1);
+
+            return Http::response([
+                [
+                    'number' => $page,
+                    'title' => 'Tombol pembayaran tidak berfungsi',
+                    'body' => 'Tombol tidak merespons ketika diklik.',
+                ],
+            ], 200, [
+                'Link' => '<https://api.github.com/repos/demo/bugs/issues?page='
+                    . ($page + 1) . '>; rel="next"',
+            ]);
+        });
+
+        $response = $this->actingAs($owner)->postJson(
+            route('sources.github.preview', $project)
+        );
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertSessionMissing('source_issue.github_preview');
+
+        $this->assertStringContainsString(
+            '500 API items',
+            $response->json('message')
+        );
+
+        $this->assertArrayNotHasKey(
+            'preview',
+            $response->json()
+        );
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
+        $this->assertDatabaseCount('activity_logs', 0);
+
+        Http::assertSentCount(5);
     }
 
     public function test_github_api_failure_does_not_save_preview(): void

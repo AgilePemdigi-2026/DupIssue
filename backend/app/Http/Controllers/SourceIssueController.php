@@ -409,6 +409,9 @@ class SourceIssueController extends Controller
             'project' => $project,
             'csvPreview' => $result,
             'csvOriginalFileName' => $file->getClientOriginalName(),
+            'githubRepoFullName' => GithubConfig::query()
+                ->where('project_id', $project->id)
+                ->value('repo_full_name'),
         ]);
     }
 
