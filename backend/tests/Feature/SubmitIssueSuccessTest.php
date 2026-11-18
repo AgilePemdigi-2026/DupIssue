@@ -33,7 +33,8 @@ class SubmitIssueSuccessTest extends TestCase
         $this->get(route('projects.show', ['id' => $project->id]))
             ->assertOk()->assertSee('href="'.route('issues.create', $project).'"', false);
         $this->get(route('issues.create', $project))->assertOk()->assertViewIs('issues.create')
-            ->assertSee('action="'.route('issues.store', $project).'"', false)
+            ->assertSee('action="'.route('issues.store', $project, false).'"', false)
+            ->assertSee('data-recommendations-url="'.route('issues.recommendations', ['project' => $project], false).'"', false)
             ->assertSee('action="'.route('logout').'"', false)
             ->assertSee('href="'.route('projects.show', ['id' => $project->id]).'"', false);
     }
