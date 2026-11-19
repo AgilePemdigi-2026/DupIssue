@@ -82,7 +82,9 @@
                 // Build/validate the history before updating the view so malformed
                 // responses do not leave half-updated status fields.
                 renderHistory(data.history);
-                document.getElementById("issue-status-value").textContent = data.status;
+                const currentStatusLabel = document.getElementById("issue-status-value");
+                currentStatusLabel.textContent = data.status;
+                currentStatusLabel.dataset.status = data.status;
                 document.getElementById("issue-detection-status-value").textContent = data.detection_status;
                 document.getElementById("issue-vote-count-value").textContent = String(data.vote_count);
                 feedback.className = "small text-success mb-1";

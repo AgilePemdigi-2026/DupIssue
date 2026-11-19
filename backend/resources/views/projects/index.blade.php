@@ -50,8 +50,8 @@
                         <small class="text-muted">
                             <i class="bi bi-person me-1"></i>{{ $project->owner->name ?? 'Maintainer' }}
                         </small>
-                        <a href="/projects/{{ $project->id }}" class="btn btn-outline-primary btn-sm">
-                            Buka Project <i class="bi bi-arrow-right ms-1"></i>
+                        <a href="{{ auth()->user()?->role === 'REPORTER' ? route('issues.index', ['project' => $project]) : route('projects.show', ['id' => $project->id]) }}" class="btn btn-outline-primary btn-sm">
+                            {{ auth()->user()?->role === 'REPORTER' ? 'Lihat Issue' : 'Buka Project' }}
                         </a>
                     </div>
                 </div>

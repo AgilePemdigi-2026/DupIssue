@@ -3,6 +3,19 @@
 @section('title', $project->name . ' - DupIssue')
 
 @section('content')
+@if(auth()->user()?->role === 'REPORTER')
+<div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+        <h1 class="h4 fw-bold mb-2">{{ $project->name }}</h1>
+        <p class="text-muted mb-3">{{ $project->description ?: 'Lihat dan laporkan issue untuk project ini.' }}</p>
+        <div class="d-flex flex-wrap gap-2 di-actions">
+            <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-primary">Lihat Daftar Issue</a>
+            <a href="{{ route('issues.create', ['project' => $project]) }}" class="btn btn-outline-primary">Submit Issue</a>
+            <a href="{{ route('projects.index') }}" class="btn btn-outline-secondary">Daftar Project</a>
+        </div>
+    </div>
+</div>
+@else
 <div class="row g-4 di-project-tiles">
     <div class="col-12">
         <div class="card shadow-sm border-0">
@@ -18,19 +31,6 @@
                         <p class="text-muted mb-0">
                             {{ $project->description ?: 'Tidak ada deskripsi untuk project ini.' }}
                         </p>
-                    </div>
-                    <div class="d-flex gap-2 di-toolbar-actions">
-                        @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
-                            <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-warning">
-                                <i class="bi bi-intersect me-1"></i> Review Kandidat Duplikat
-                            </a>
-                            <a href="/projects/{{ $project->id }}/members" class="btn btn-outline-primary">
-                                <i class="bi bi-people me-1"></i> Anggota Project
-                            </a>
-                            <a href="/projects/{{ $project->id }}/settings" class="btn btn-outline-secondary">
-                                <i class="bi bi-gear me-1"></i> Edit Project
-                            </a>
-                        @endif
                     </div>
                 </div>
             </div>
@@ -148,4 +148,5 @@
     @endif
 
 </div>
+@endif
 @endsection

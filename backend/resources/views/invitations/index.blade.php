@@ -11,7 +11,7 @@
                 <p class="text-muted small mb-0">Tanggapi undangan dari Maintainer untuk mendapatkan akses pelaporan issue pada project.</p>
             </div>
             <a href="/projects" class="btn btn-outline-secondary btn-sm">
-                <i class="bi bi-arrow-left me-1"></i> Kembali ke Daftar Project
+                Kembali ke Daftar Project
             </a>
         </div>
 
