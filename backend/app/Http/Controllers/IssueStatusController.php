@@ -46,6 +46,39 @@ class IssueStatusController extends Controller
         return (string) ($issue->getRawOriginal('updated_at') ?? '');
     }
 
+    /**
+     * A DATETIME without microseconds cannot detect OPEN -> IN_PROGRESS -> OPEN
+     * within the same second. An issue-specific audit revision closes that gap
+     * for status changes recorded by the existing status/duplicate modules.
+     */
+    private function statusAuditRevision(Project $project, Issue $issue): int
+    {
+        return (int) DB::table('activity_logs')
+            ->where('project_id', $project->id)
+            ->where('issue_id', $issue->id)
+            ->whereIn('action', [
+                'ISSUE_STATUS_CHANGED',
+                'DUPLICATE_AUTO_CLOSED',
+                'DUPLICATE_REVIEW',
+                'DUPLICATE_CORRECTED',
+            ])
+            ->max('id');
+    }
+
+    /**
+     * A count alone misses changes to WHICH linked duplicate needs closing.
+     * The digest is stored only in the user's session, not in the database.
+     */
+    private function childrenFingerprint(iterable $children): string
+    {
+        $snapshot = [];
+        foreach ($children as $child) {
+            $snapshot[] = [(int) $child->id, (string) $child->status];
+        }
+
+        return hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR));
+    }
+
     private function rejectInvalid(string $status): never
     {
         $options = self::allowedTransitions($status);
@@ -81,18 +114,23 @@ class IssueStatusController extends Controller
             $this->rejectInvalid($issue->status);
         }
 
-        $autoCloseCount = $target === 'RESOLVED'
+        $children = $target === 'RESOLVED'
             ? Issue::query()->where('project_id', $project->id)
-                ->where('duplicate_of', $issue->id)->where('status', '<>', 'CLOSED')->count()
-            : 0;
+                ->where('duplicate_of', $issue->id)
+                ->orderBy('id')->get(['id', 'status'])
+            : collect();
+        $autoCloseCount = $children->where('status', '!=', 'CLOSED')->count();
 
         $token = Str::random(48);
         $request->session()->put($this->sessionKey($project, $issue), [
             'token' => $token,
             'current_status' => $issue->status,
             'current_version' => $this->version($issue),
+            'current_status_audit_id' => $this->statusAuditRevision($project, $issue),
             'target_status' => $target,
             'auto_close_count' => $autoCloseCount,
+            'children_fingerprint' => $target === 'RESOLVED'
+                ? $this->childrenFingerprint($children) : null,
         ]);
 
         return view('issues.status-confirm', compact('project', 'issue', 'token', 'target', 'autoCloseCount'));
@@ -116,7 +154,9 @@ class IssueStatusController extends Controller
                 abort_unless((int) $locked->project_id === (int) $project->id, 404);
                 abort_unless($locked->duplicate_of === null
                     && $locked->status === $pending['current_status']
-                    && $this->version($locked) === $pending['current_version'],
+                    && $this->version($locked) === $pending['current_version']
+                    && $this->statusAuditRevision($project, $locked)
+                        === ($pending['current_status_audit_id'] ?? null),
                     409, 'Data issue telah berubah. Muat ulang halaman sebelum mengubah status');
                 if (! in_array($target, self::allowedTransitions($locked->status), true)) {
                     $this->rejectInvalid($locked->status);
@@ -130,8 +170,12 @@ class IssueStatusController extends Controller
                         ->where('duplicate_of', $locked->id)
                         ->orderBy('id')->lockForUpdate()->get();
                     $due = $children->where('status', '!=', 'CLOSED')->count();
-                    abort_unless($due === (int) $pending['auto_close_count'],
-                        409, 'Data duplikat berubah. Muat ulang dan konfirmasi jumlah terbaru');
+                    abort_unless($due === (int) $pending['auto_close_count']
+                        && hash_equals(
+                            (string) ($pending['children_fingerprint'] ?? ''),
+                            $this->childrenFingerprint($children)
+                        ), 409,
+                        'Data duplikat berubah. Muat ulang dan konfirmasi jumlah terbaru');
                 }
 
                 $old = $locked->status;
