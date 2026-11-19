@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\GithubAppConnection;
+use App\Models\GithubConfig;
 use App\Services\GithubAppInstallationTokenService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\RedirectResponse;
@@ -43,8 +44,14 @@ class GithubAppConnectController extends Controller
             is_array($pending)
                 && is_int($pending['project_id'] ?? null)
                 && is_int($pending['actor_id'] ?? null)
-                && is_int($pending['installation_id'] ?? null)
-                && $pending['installation_id'] > 0
+                && array_key_exists('installation_id', $pending)
+                && (
+                    $pending['installation_id'] === null
+                    || (
+                        is_int($pending['installation_id'])
+                        && $pending['installation_id'] > 0
+                    )
+                )
                 && is_int($pending['github_user_id'] ?? null)
                 && $pending['github_user_id'] > 0
                 && is_int($pending['expires_at'] ?? null)
@@ -83,6 +90,38 @@ class GithubAppConnectController extends Controller
         );
 
         $repoFullName = $selected['full_name'];
+
+        $selectedInstallationId = $selected['installation_id']
+            ?? $pending['installation_id'];
+
+        abort_unless(
+            is_int($selectedInstallationId)
+                && $selectedInstallationId > 0,
+            403,
+            'Instalasi untuk repository tidak terverifikasi.'
+        );
+
+        $pending['installation_id'] = $selectedInstallationId;
+
+        // Validation before external API calls. A repository may be changed
+        // only by a fresh, explicitly confirmed request from its owner.
+        $before = GithubAppConnection::query()
+            ->where('project_id', $project->id)
+            ->first();
+
+        $replacement = $before !== null && (
+            (int) $before->repository_id !== $repositoryId
+            || (int) $before->installation_id !== $selectedInstallationId
+            || strcasecmp($before->repo_full_name, $repoFullName) !== 0
+        );
+
+        if ($replacement) {
+            $request->validate([
+                'confirm_replace' => ['required', 'accepted'],
+            ]);
+        }
+
+        $confirmedReplace = $request->boolean('confirm_replace');
 
         // Token terbatas ke satu repository dan issues:read.
         try {
@@ -127,7 +166,8 @@ class GithubAppConnectController extends Controller
             $user,
             $pending,
             $repositoryId,
-            $repoFullName
+            $repoFullName,
+            $confirmedReplace
         ): void {
             $lockedProject = Project::query()
                 ->whereKey($project->id)
@@ -140,10 +180,58 @@ class GithubAppConnectController extends Controller
                 'Kepemilikan project telah berubah.'
             );
 
+            $patRepository = GithubConfig::query()
+                ->where('project_id', $project->id)
+                ->value('repo_full_name');
+
+            abort_if(
+                is_string($patRepository)
+                    && strcasecmp($patRepository, $repoFullName) !== 0,
+                409,
+                'Project ini sudah menggunakan repository GitHub lain melalui PAT.'
+            );
+
             $connection = GithubAppConnection::query()
                 ->where('project_id', $project->id)
                 ->lockForUpdate()
                 ->first();
+
+            // Detect concurrent changes made after OAuth was started.
+            // The legacy setup callback has no snapshot: preserve its behavior.
+            if (array_key_exists('expected_connection', $pending)) {
+                $snapshot = $pending['expected_connection'];
+                if ($snapshot === null) {
+                    abort_unless(
+                        $connection === null,
+                        409,
+                        'Koneksi project berubah selama OAuth. Ulangi proses.'
+                    );
+                } else {
+                    abort_unless(
+                        is_array($snapshot)
+                            && $connection !== null
+                            && (int) $connection->id === ($snapshot['id'] ?? null)
+                            && (int) $connection->repository_id === ($snapshot['repository_id'] ?? null)
+                            && (int) $connection->installation_id === ($snapshot['installation_id'] ?? null)
+                            && $connection->repo_full_name === ($snapshot['repo_full_name'] ?? null),
+                        409,
+                        'Repository telah berubah selama OAuth. Ulangi proses.'
+                    );
+                }
+            }
+
+            $isChanging = $connection !== null && (
+                (int) $connection->repository_id !== $repositoryId
+                || (int) $connection->installation_id
+                    !== $pending['installation_id']
+                || strcasecmp($connection->repo_full_name, $repoFullName) !== 0
+            );
+
+            abort_unless(
+                ! $isChanging || $confirmedReplace,
+                422,
+                'Penggantian repository harus dikonfirmasi.'
+            );
 
             if ($connection === null) {
                 $connection = new GithubAppConnection();
@@ -166,9 +254,11 @@ class GithubAppConnectController extends Controller
 
         // Hanya hapus sesi verifikasi setelah database berhasil
         // menyimpan koneksi.
-        $request->session()->forget(
-            'source_issue.github_app_verified_repositories'
-        );
+        $request->session()->forget([
+            'source_issue.github_app_verified_repositories',
+            'source_issue.github_app_preview',
+            'source_issue.github_preview',
+        ]);
 
         $response = redirect()
             ->route('sources.index', [
@@ -186,7 +276,8 @@ class GithubAppConnectController extends Controller
     }
 
     public function handleCallback(
-        Request $request
+        Request $request,
+        GithubAppInstallationTokenService $tokenService
     ): RedirectResponse {
         $pending = $request->session()->get(
             'source_issue.github_app_oauth'
@@ -213,8 +304,14 @@ class GithubAppConnectController extends Controller
                 )
                 && is_int($pending['project_id'] ?? null)
                 && is_int($pending['actor_id'] ?? null)
-                && is_int($pending['installation_id'] ?? null)
-                && $pending['installation_id'] > 0
+                && array_key_exists('installation_id', $pending)
+                && (
+                    $pending['installation_id'] === null
+                    || (
+                        is_int($pending['installation_id'])
+                        && $pending['installation_id'] > 0
+                    )
+                )
                 && is_int($pending['expires_at'] ?? null)
                 && $pending['expires_at'] > now()->timestamp
                 && $pending['actor_id'] === (int) $user->id,
@@ -322,63 +419,136 @@ class GithubAppConnectController extends Controller
                 'Identitas pengguna GitHub tidak terverifikasi.'
             );
 
-            $installationId = $pending['installation_id'];
-
-            $repositoriesResponse = $github->get(
-                "/user/installations/{$installationId}/repositories",
-                [
-                    'per_page' => 100,
-                    'page' => 1,
-                ]
-            );
-
-            abort_unless(
-                $repositoriesResponse->ok(),
-                403,
-                'Pengguna tidak memiliki akses ke instalasi GitHub.'
-            );
-
-            $total = $repositoriesResponse->json('total_count');
-            $repositories = $repositoriesResponse->json('repositories');
-
-            // Pembatasan sementara: jangan abaikan repository
-            // yang berada di halaman pagination berikutnya.
-            abort_unless(
-                is_int($total)
-                    && $total > 0
-                    && $total <= 100
-                    && is_array($repositories)
-                    && count($repositories) === $total,
-                422,
-                'Daftar repository tidak valid atau melebihi 100.'
-            );
-
-            $verified = [];
-
-            foreach ($repositories as $repo) {
-                abort_unless(
-                    is_array($repo)
-                        && is_int($repo['id'] ?? null)
-                        && ($repo['id'] ?? 0) > 0
-                        && is_string($repo['full_name'] ?? null)
-                        && preg_match(
-                            '/\A[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\z/',
-                            $repo['full_name']
-                        ),
-                    502,
-                    'Metadata repository GitHub tidak valid.'
+            // Read only installations accessible to this authenticated
+            // GitHub user, then filter them to OUR GitHub App.
+            if ($pending['installation_id'] === null) {
+                $installationsResponse = $github->get(
+                    '/user/installations',
+                    ['per_page' => 100, 'page' => 1]
                 );
 
-                $verified[$repo['id']] = [
-                    'id' => $repo['id'],
-                    'full_name' => $repo['full_name'],
-                ];
+                $installationTotal = $installationsResponse->json(
+                    'total_count'
+                );
+                $installationRows = $installationsResponse->json(
+                    'installations'
+                );
+
+                // Fail closed instead of silently discarding later pages.
+                abort_unless(
+                    $installationsResponse->ok()
+                        && is_int($installationTotal)
+                        && $installationTotal >= 0
+                        && $installationTotal <= 100
+                        && is_array($installationRows)
+                        && count($installationRows) === $installationTotal,
+                    422,
+                    'Daftar instalasi GitHub tidak lengkap.'
+                );
+
+                $installationIds = [];
+                foreach ($installationRows as $installation) {
+                    abort_unless(is_array($installation), 502);
+
+                    if (
+                        (string) ($installation['app_id'] ?? '')
+                            !== (string) config('services.github_app.app_id')
+                        || ($installation['suspended_at'] ?? null) !== null
+                        || ($installation['permissions']['issues'] ?? null)
+                            !== 'read'
+                    ) {
+                        continue;
+                    }
+
+                    abort_unless(
+                        is_int($installation['id'] ?? null)
+                            && $installation['id'] > 0,
+                        502,
+                        'ID instalasi GitHub tidak valid.'
+                    );
+                    $installationIds[$installation['id']] =
+                        $installation['id'];
+                }
+
+                if ($installationIds === []) {
+                    // No installation of this App accessible to the user.
+                    // Reuse the existing installation flow, including state.
+                    return $this->startInstallation($request, $project);
+                }
+
+                $installationIds = array_values($installationIds);
+            } else {
+                // The callback arrived after a new installation setup.
+                $installationIds = [$pending['installation_id']];
+            }
+
+            $verified = [];
+            foreach ($installationIds as $installationId) {
+                $repositoriesResponse = $github->get(
+                    "/user/installations/{$installationId}/repositories",
+                    ['per_page' => 100, 'page' => 1]
+                );
+
+                abort_unless(
+                    $repositoriesResponse->ok(),
+                    403,
+                    'Pengguna tidak memiliki akses ke instalasi GitHub.'
+                );
+
+                $total = $repositoriesResponse->json('total_count');
+                $repositories = $repositoriesResponse->json('repositories');
+
+                abort_unless(
+                    $repositoriesResponse->ok()
+                        && is_int($total)
+                        && $total >= 0
+                        && $total <= 100
+                        && is_array($repositories)
+                        && count($repositories) === $total,
+                    422,
+                    'Daftar repository GitHub tidak lengkap.'
+                );
+
+                foreach ($repositories as $repo) {
+                    abort_unless(
+                        is_array($repo)
+                            && is_int($repo['id'] ?? null)
+                            && $repo['id'] > 0
+                            && is_string($repo['full_name'] ?? null)
+                            && strlen($repo['full_name']) <= 255
+                            && preg_match(
+                                '/\A[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\z/',
+                                $repo['full_name']
+                            ),
+                        502,
+                        'Metadata repository GitHub tidak valid.'
+                    );
+
+                    // Never silently replace a duplicate repository ID.
+                    abort_unless(
+                        ! array_key_exists($repo['id'], $verified),
+                        502,
+                        'ID repository GitHub duplikat.'
+                    );
+
+                    $verified[$repo['id']] = [
+                        'id' => $repo['id'],
+                        'full_name' => $repo['full_name'],
+                    ];
+
+                    // Preserve the original callback session format.
+                    // Auto-discovery also records the installation per repo.
+                    if ($pending['installation_id'] === null) {
+                        $verified[$repo['id']]['installation_id'] =
+                            $installationId;
+                    }
+                }
             }
 
             abort_unless(
-                count($verified) === $total,
-                502,
-                'Daftar repository GitHub berisi ID duplikat.'
+                count($verified) > 0,
+                422,
+                'Tidak ada repository yang dapat diakses melalui GitHub App.'
             );
 
             $request->session()->put(
@@ -386,14 +556,54 @@ class GithubAppConnectController extends Controller
                 [
                     'project_id' => (int) $project->id,
                     'actor_id' => (int) $user->id,
-                    'installation_id' => $installationId,
+                    // Multiple installations can be represented per repo.
+                    'installation_id' => count($installationIds) === 1
+                        ? $installationIds[0]
+                        : null,
                     'github_user_id' => $identity->json('id'),
                     'repositories' => array_values($verified),
+                    'expected_connection' => $pending['expected_connection'] ?? null,
                     'expires_at' => now()->addMinutes(10)->timestamp,
                 ]
             );
         } catch (ConnectionException $exception) {
             abort(502, 'GitHub tidak dapat dihubungi.');
+        }
+
+        // Never silently replace an existing project repository.
+        // New projects still auto-connect when exactly one repo is available.
+        $connected = GithubAppConnection::query()
+            ->where('project_id', $project->id)
+            ->first();
+        $onlyRepository = count($verified) === 1
+            ? reset($verified)
+            : null;
+        $sameRepository = $connected !== null
+            && is_array($onlyRepository)
+            && (int) $connected->repository_id === $onlyRepository['id']
+            && (int) $connected->installation_id
+                === ($onlyRepository['installation_id'] ?? $pending['installation_id'])
+            && strcasecmp(
+                $connected->repo_full_name,
+                $onlyRepository['full_name']
+            ) === 0;
+
+        if (
+            $pending['installation_id'] === null
+            && count($verified) === 1
+            && ($connected === null || $sameRepository)
+        ) {
+            // User initiated the link; one accessible repository needs
+            // no further selection. Reuse saveConnection's scoped token,
+            // repository-ID verification and database transaction.
+            $only = reset($verified);
+            $request->merge(['repository_id' => $only['id']]);
+
+            return $this->saveConnection(
+                $request,
+                $project,
+                $tokenService
+            );
         }
 
         // Redirect membersihkan authorization code dari address bar.
@@ -429,8 +639,14 @@ class GithubAppConnectController extends Controller
                 && $user->role === 'MAINTAINER'
                 && is_int($pending['project_id'] ?? null)
                 && is_int($pending['actor_id'] ?? null)
-                && is_int($pending['installation_id'] ?? null)
-                && $pending['installation_id'] > 0
+                && array_key_exists('installation_id', $pending)
+                && (
+                    $pending['installation_id'] === null
+                    || (
+                        is_int($pending['installation_id'])
+                        && $pending['installation_id'] > 0
+                    )
+                )
                 && is_int($pending['expires_at'] ?? null)
                 && $pending['expires_at'] > now()->timestamp
                 && $pending['actor_id'] === (int) $user->id,
@@ -496,6 +712,7 @@ class GithubAppConnectController extends Controller
                 'project_id' => (int) $project->id,
                 'actor_id' => (int) $user->id,
                 'installation_id' => $pending['installation_id'],
+                'expected_connection' => $pending['expected_connection'] ?? null,
                 'expires_at' => now()->addMinutes(10)->timestamp,
             ]
         );
@@ -641,6 +858,59 @@ class GithubAppConnectController extends Controller
         $response->headers->set('Referrer-Policy', 'no-referrer');
 
         return $response;
+    }
+
+    /**
+     * Start OAuth first. The callback discovers installations the user can
+     * access; no installation ID is entered by the browser.
+     */
+    public function startConnection(
+        Request $request,
+        Project $project
+    ): RedirectResponse {
+        $user = $request->user();
+
+        abort_unless(
+            $user
+                && $user->role === 'MAINTAINER'
+                && (int) $project->owner_id === (int) $user->id,
+            403,
+            'Hanya Maintainer pemilik project yang diizinkan.'
+        );
+
+        $existing = GithubAppConnection::query()
+            ->where('project_id', $project->id)
+            ->first();
+
+        $expectedConnection = $existing === null ? null : [
+            'id' => (int) $existing->id,
+            'installation_id' => (int) $existing->installation_id,
+            'repository_id' => (int) $existing->repository_id,
+            'repo_full_name' => $existing->repo_full_name,
+        ];
+
+        $request->session()->forget([
+            'source_issue.github_app_install',
+            'source_issue.github_app_pending_oauth',
+            'source_issue.github_app_oauth',
+            'source_issue.github_app_verified_repositories',
+        ]);
+
+        $request->session()->put(
+            'source_issue.github_app_pending_oauth',
+            [
+                'project_id' => (int) $project->id,
+                'actor_id' => (int) $user->id,
+                // null means discover the installation after OAuth.
+                'installation_id' => null,
+                'expected_connection' => $expectedConnection,
+                'expires_at' => now()->addMinutes(15)->timestamp,
+            ]
+        );
+
+        return redirect()
+            ->route('sources.github.app.authorize')
+            ->header('Cache-Control', 'no-store');
     }
 
     public function startInstallation(

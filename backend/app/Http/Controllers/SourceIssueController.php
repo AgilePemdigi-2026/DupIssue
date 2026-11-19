@@ -239,6 +239,18 @@ class SourceIssueController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            // One active repository per project, regardless of source.
+            $appRepository = GithubAppConnection::query()
+                ->where('project_id', $project->id)
+                ->value('repo_full_name');
+
+            abort_if(
+                is_string($appRepository)
+                    && strcasecmp($appRepository, $repoFullName) !== 0,
+                409,
+                'Project ini sudah menggunakan repository GitHub lain melalui GitHub App.'
+            );
+
             $config = GithubConfig::query()
                 ->where('project_id', $project->id)
                 ->first();

@@ -83,7 +83,7 @@ Route::middleware(['auth', 'role:MAINTAINER'])
         // Memulai instalasi GitHub App untuk Maintainer pemilik project.
         Route::post(
             '/projects/{project}/sources/github/app/connect',
-            [GithubAppConnectController::class, 'startInstallation']
+            [GithubAppConnectController::class, 'startConnection']
         )
             ->middleware('throttle:5,1')
             ->name('sources.github.app.connect');

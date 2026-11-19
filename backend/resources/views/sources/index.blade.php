@@ -623,29 +623,108 @@
                                     @endforeach
                                 </select>
 
+                                @if(!empty($githubAppRepoFullName))
+                                    <div class="alert alert-warning small">
+                                        Koneksi yang aktif:
+                                        <strong>{{ $githubAppRepoFullName }}</strong>.
+                                        Repository lama tetap tersimpan sebagai
+                                        asal issue historis. Perubahan koneksi
+                                        berlaku untuk pengambilan issue berikutnya.
+                                    </div>
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input"
+                                               type="checkbox" value="1"
+                                               name="confirm_replace"
+                                               id="githubAppConfirmReplace" required>
+                                        <label class="form-check-label"
+                                               for="githubAppConfirmReplace">
+                                            Saya menyetujui penggantian
+                                            repository aktif pada project ini.
+                                        </label>
+                                    </div>
+                                @endif
+
                                 <button type="submit"
                                         class="btn btn-primary">
                                     <i class="bi bi-check-circle me-1"></i>
-                                    Simpan Koneksi GitHub App
+                                    {{ !empty($githubAppRepoFullName)
+                                        ? 'Konfirmasi Ganti Repository'
+                                        : 'Simpan Koneksi GitHub App' }}
                                 </button>
                             </form>
                         </div>
                     @endif
 
-                    <form method="POST"
-                          action="{{ route('sources.github.app.connect', [
-                              'project' => $project->id
-                          ]) }}">
-                        @csrf
-
-                        <button type="submit"
-                                class="btn btn-outline-primary">
-                            <i class="bi bi-github me-1"></i>
-                            {{ !empty($githubAppRepoFullName)
-                                ? 'Hubungkan Repository Lain'
-                                : 'Hubungkan GitHub App' }}
+                    @if(!empty($githubAppRepoFullName))
+                        <button type="button"
+                                class="btn btn-outline-primary"
+                                data-bs-toggle="modal"
+                                data-bs-target="#githubAppReplaceModal">
+                            <i class="bi bi-arrow-left-right me-1"></i>
+                            Ganti Repository
                         </button>
-                    </form>
+
+                        <div class="modal fade" id="githubAppReplaceModal"
+                             tabindex="-1" aria-hidden="true"
+                             aria-labelledby="githubAppReplaceTitle">
+                            <div class="modal-dialog modal-dialog-centered">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h4 class="modal-title h5"
+                                            id="githubAppReplaceTitle">
+                                            Ganti Repository GitHub?
+                                        </h4>
+                                        <button type="button"
+                                                class="btn-close"
+                                                data-bs-dismiss="modal"
+                                                aria-label="Tutup"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <p class="mb-2">
+                                            Repository saat ini:
+                                            <strong>{{ $githubAppRepoFullName }}</strong>
+                                        </p>
+                                        <p class="text-muted small mb-0">
+                                            Repository baru akan menjadi sumber
+                                            pengambilan issue berikutnya. Issue
+                                            yang sudah diimpor tetap tersimpan
+                                            dengan identitas repository asal,
+                                            dan tidak otomatis dihapus.
+                                            Jika memilih repository lain,
+                                            konfirmasi akhir diperlukan sebelum
+                                            koneksi berubah.
+                                        </p>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button"
+                                                class="btn btn-outline-secondary"
+                                                data-bs-dismiss="modal">Batal</button>
+                                        <form method="POST"
+                                              action="{{ route('sources.github.app.connect', [
+                                                  'project' => $project->id
+                                              ]) }}">
+                                            @csrf
+                                            <button type="submit"
+                                                    class="btn btn-primary">
+                                                Lanjutkan Penggantian
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    @else
+                        <form method="POST"
+                              action="{{ route('sources.github.app.connect', [
+                                  'project' => $project->id
+                              ]) }}">
+                            @csrf
+                            <button type="submit" class="btn btn-outline-primary">
+                                <i class="bi bi-github me-1"></i>
+                                Hubungkan GitHub
+                            </button>
+                        </form>
+                    @endif
 
                     <p class="text-muted small mt-3 mb-0">
                         Instalasi dan izin akses dikelola melalui GitHub.
