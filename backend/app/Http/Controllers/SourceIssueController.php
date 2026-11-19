@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\UploadedFile;
 use App\Models\Project;
 use App\Models\GithubConfig;
+use App\Models\GithubAppConnection;
 use App\Services\CsvIssuePreviewService;
 use App\Services\CsvIssueReader;
 use Illuminate\Contracts\View\View;
@@ -50,11 +51,56 @@ class SourceIssueController extends Controller
     {
         $this->authorizeOwner($request, $project);
 
+        // Repository yang telah diverifikasi melalui OAuth.
+        // Metadata ini hanya tersedia untuk actor dan project
+        // yang sama, serta selama session belum kedaluwarsa.
+        $pending = $request->session()->get(
+            'source_issue.github_app_verified_repositories'
+        );
+
+        $verifiedRepositories = [];
+
+        if (
+            is_array($pending)
+            && ($pending['project_id'] ?? null) === (int) $project->id
+            && ($pending['actor_id'] ?? null) === (int) $request->user()->id
+            && is_int($pending['installation_id'] ?? null)
+            && $pending['installation_id'] > 0
+            && is_int($pending['expires_at'] ?? null)
+            && $pending['expires_at'] > now()->timestamp
+            && is_array($pending['repositories'] ?? null)
+        ) {
+            foreach ($pending['repositories'] as $repository) {
+                if (
+                    ! is_array($repository)
+                    || ! is_int($repository['id'] ?? null)
+                    || $repository['id'] <= 0
+                    || ! is_string($repository['full_name'] ?? null)
+                    || strlen($repository['full_name']) > 255
+                    || ! preg_match(
+                        '~\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z~',
+                        $repository['full_name']
+                    )
+                ) {
+                    continue;
+                }
+
+                $verifiedRepositories[] = [
+                    'id' => $repository['id'],
+                    'full_name' => $repository['full_name'],
+                ];
+            }
+        }
+
         return view('sources.index', [
             'project' => $project,
             'githubRepoFullName' => GithubConfig::query()
                 ->where('project_id', $project->id)
                 ->value('repo_full_name'),
+            'githubAppRepoFullName' => GithubAppConnection::query()
+                ->where('project_id', $project->id)
+                ->value('repo_full_name'),
+            'githubAppVerifiedRepositories' => $verifiedRepositories,
         ]);
     }
 
@@ -192,6 +238,18 @@ class SourceIssueController extends Controller
                 ->whereKey($project->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            // One active repository per project, regardless of source.
+            $appRepository = GithubAppConnection::query()
+                ->where('project_id', $project->id)
+                ->value('repo_full_name');
+
+            abort_if(
+                is_string($appRepository)
+                    && strcasecmp($appRepository, $repoFullName) !== 0,
+                409,
+                'Project ini sudah menggunakan repository GitHub lain melalui GitHub App.'
+            );
 
             $config = GithubConfig::query()
                 ->where('project_id', $project->id)
@@ -405,13 +463,9 @@ class SourceIssueController extends Controller
             Storage::disk('local')->delete($previous['path']);
         }
 
-        return view('sources.index', [
-            'project' => $project,
+        return $this->index($request, $project)->with([
             'csvPreview' => $result,
             'csvOriginalFileName' => $file->getClientOriginalName(),
-            'githubRepoFullName' => GithubConfig::query()
-                ->where('project_id', $project->id)
-                ->value('repo_full_name'),
         ]);
     }
 
