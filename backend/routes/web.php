@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\PasswordResetOtpController;
+use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\IssueController;
 use App\Http\Controllers\IssueRecommendationController;
 use App\Http\Controllers\DuplicateReviewController;
@@ -199,6 +200,16 @@ Route::middleware('auth')->group(function () {
         [IssueStatusController::class, 'confirm'])
         ->middleware('role:MAINTAINER')
         ->name('issues.status.confirm');
+
+    // REQ-07.7 — Riwayat & Log Aktivitas Project (MAINTAINER only)
+    Route::get('/projects/{project}/activity',
+        [ActivityLogController::class, 'index'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.activity.index');
+    Route::get('/projects/{project}/activity/export',
+        [ActivityLogController::class, 'export'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.activity.export');
 });
 
 /*
