@@ -21,6 +21,9 @@
                     </div>
                     <div class="d-flex gap-2 di-toolbar-actions">
                         @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+                            <a href="{{ route('projects.dashboard', ['project' => $project]) }}" class="btn btn-primary">
+                                <i class="bi bi-bar-chart-line me-1"></i> Dashboard Statistik
+                            </a>
                             <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-warning">
                                 <i class="bi bi-intersect me-1"></i> Review Kandidat Duplikat
                             </a>

@@ -8,6 +8,7 @@ use App\Http\Controllers\DuplicateReviewController;
 use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\ProjectDashboardController;
 use App\Http\Controllers\ProjectMemberController;
 use App\Models\Project;
 use App\Services\ProjectService;
@@ -209,6 +210,10 @@ Route::middleware('auth')->group(function () {
 */
 
 Route::middleware(['auth'])->group(function () {
+    Route::get('/projects/{project}/dashboard', [ProjectDashboardController::class, 'show'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.dashboard');
+
     // Project Management
     Route::get('/projects', [ProjectMemberController::class, 'index'])->name('projects.index');
     Route::get('/projects/new', [ProjectMemberController::class, 'create'])->name('projects.create');
