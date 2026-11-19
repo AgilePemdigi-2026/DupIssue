@@ -479,3 +479,106 @@
 @media (prefers-reduced-motion: no-preference) {
     .di-auth .card { animation: di-rise .42s cubic-bezier(.22,1,.36,1) both; }
 }
+
+
+/* DupIssue Sprint 3: seven-point UI/navigation refinement (2026-11-19). */
+/* Top navigation with a clear current-page indicator. */
+.di-app .di-main-nav { gap: .2rem; align-items: stretch; }
+.di-app .di-main-nav .di-nav-link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    padding: .75rem 1.05rem;
+    color: #646b82;
+    font-weight: 550;
+    border-radius: 9px 9px 0 0;
+    transition: color .2s ease, background-color .2s ease;
+}
+.di-app .di-main-nav .di-nav-link:hover { color: #5546a9; background: #f6f3fe; }
+.di-app .di-main-nav .di-nav-link.is-active { color: #49368f; font-weight: 700; }
+.di-app .di-main-nav .di-nav-link.is-active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 1rem;
+    right: 1rem;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: #6f42c1;
+}
+/* Profile identity: initials avatar, name, and role (not a giant badge). */
+.di-app .di-account-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: .65rem;
+    min-width: 0;
+    max-width: 255px;
+}
+.di-app .di-account-avatar {
+    display: inline-flex;
+    flex: 0 0 39px;
+    width: 39px;
+    height: 39px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 50%;
+    background: #efe8ff;
+    color: #6044a9;
+    border: 1px solid #d9cafa;
+    font-size: .91rem;
+    font-weight: 750;
+}
+.di-app .di-account-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.di-app .di-account-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #25203e;
+    font-size: .82rem;
+    font-weight: 700;
+}
+.di-app .di-account-role { color: #716884; font-size: .68rem; font-weight: 500; margin-top: 2px; }
+/* Distinct heading for issue table, without coloring data rows. */
+.di-app .di-table-issues thead th {
+    --bs-table-bg: #eee9fb;
+    background: #eee9fb !important;
+    color: #463585 !important;
+    border-bottom: 2px solid #d8c8f5 !important;
+    font-weight: 700;
+    letter-spacing: .025em;
+    padding-top: 1.05rem;
+    padding-bottom: 1.05rem;
+}
+/* Five distinct issue status meanings, separate from NLP detection status. */
+.di-app .badge.di-issue-status {
+    --di-status-bg: #e2e8f0;
+    --di-status-fg: #334155;
+    --di-status-line: #cbd5e1;
+    display: inline-flex;
+    vertical-align: middle;
+    padding: .38rem .62rem;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    border-radius: 7px;
+    font-size: .69rem;
+    font-weight: 700;
+    background: var(--di-status-bg) !important;
+    color: var(--di-status-fg) !important;
+    border: 1px solid var(--di-status-line) !important;
+}
+.di-app .badge.di-issue-status[data-status="OPEN"] { --di-status-bg:#dbeafe; --di-status-fg:#1d4ed8; --di-status-line:#93c5fd; }
+.di-app .badge.di-issue-status[data-status="IN_PROGRESS"] { --di-status-bg:#fef3c7; --di-status-fg:#92400e; --di-status-line:#fcd34d; }
+.di-app .badge.di-issue-status[data-status="RESOLVED"] { --di-status-bg:#dcfce7; --di-status-fg:#166534; --di-status-line:#86efac; }
+.di-app .badge.di-issue-status[data-status="CLOSED"] { --di-status-bg:#e2e8f0; --di-status-fg:#334155; --di-status-line:#cbd5e1; }
+.di-app .badge.di-issue-status[data-status="DUPLICATE"] { --di-status-bg:#f3e8ff; --di-status-fg:#6b21a8; --di-status-line:#d8b4fe; }
+@media (max-width: 991.98px) {
+    .di-app .di-main-nav .di-nav-link { border-radius: 9px; min-height: 42px; }
+    .di-app .di-main-nav .di-nav-link.is-active::after { left: .8rem; right: auto; width: 3px; height: 56%; bottom: 22%; border-radius: 4px; }
+    .di-app .di-account-summary { max-width: 185px; }
+}
+@media (forced-colors: active) {
+    .di-app .badge.di-issue-status { border: 1px solid CanvasText !important; }
+    .di-app .di-main-nav .di-nav-link.is-active { text-decoration: underline; }
+}

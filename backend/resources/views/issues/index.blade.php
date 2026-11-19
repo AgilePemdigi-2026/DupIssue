@@ -19,7 +19,7 @@
                 @if (auth()->user()->role === 'REPORTER')
                     <a class="btn btn-primary btn-sm" href="{{ route('issues.create', ['project' => $project]) }}">Submit Issue</a>
                 @endif
-                <a class="btn btn-outline-secondary btn-sm" href="{{ route('projects.show', ['id' => $project->id]) }}">Kembali ke Project</a>
+                <a class="btn btn-outline-secondary btn-sm" href="{{ auth()->user()?->role === 'REPORTER' ? route('projects.index') : route('projects.show', ['id' => $project->id]) }}">{{ auth()->user()?->role === 'REPORTER' ? 'Daftar Project' : 'Kembali ke Project' }}</a>
             </div>
         </div>
 
@@ -97,7 +97,7 @@
                                         @endif
                                     @endif
                                 </td>
-                                <td><span class="badge bg-light text-dark border">{{ $issue->status }}</span></td>
+                                <td><span class="badge di-issue-status" data-status="{{ $issue->status }}">{{ $issue->status }}</span></td>
                                 <td>{{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</td>
                                 <td>{{ (int) $issue->vote_count }}</td>
                                 <td><span class="badge bg-light text-dark border">{{ $issue->detection_status }}</span></td>

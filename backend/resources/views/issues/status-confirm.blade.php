@@ -7,8 +7,8 @@
     <div class="card-body p-4">
         <h1 class="h4">Konfirmasi Perubahan Status</h1>
         <p><strong>Issue #{{ $issue->id }}</strong> — {{ $issue->title }}</p>
-        <p>Status saat ini: <strong>{{ $issue->status }}</strong></p>
-        <p>Status tujuan: <strong>{{ $target }}</strong></p>
+        <p>Status saat ini: <span class="badge di-issue-status" data-status="{{ $issue->status }}">{{ $issue->status }}</span></p>
+        <p>Status tujuan: <span class="badge di-issue-status" data-status="{{ $target }}">{{ $target }}</span></p>
 
         @if ($target === 'RESOLVED')
             <div class="alert alert-warning" role="status">

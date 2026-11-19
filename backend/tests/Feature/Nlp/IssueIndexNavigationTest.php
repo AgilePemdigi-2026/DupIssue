@@ -46,7 +46,7 @@ class IssueIndexNavigationTest extends TestCase
         $detailUrl = route('issues.show', ['project' => $project, 'issue' => $issue]);
 
         $this->actingAs($reporter)->get(route('projects.show', ['id' => $project->id]))
-            ->assertOk()->assertSee($listUrl, false)->assertSee('Lihat Issue');
+            ->assertOk()->assertSee($listUrl, false)->assertSee('Lihat Daftar Issue');
         $this->get($listUrl)
             ->assertOk()->assertSee('Issue login pengujian')
             ->assertSee('COMPLETED')->assertSee($detailUrl, false);
