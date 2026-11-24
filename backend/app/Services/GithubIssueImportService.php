@@ -223,12 +223,10 @@ class GithubIssueImportService
             $batch->status = 'COMPLETED';
             $batch->save();
 
-            // Update the synchronization timestamp only
-            // after the import has been prepared successfully.
-            if (! $isAppConnection) {
-                $config->last_synced_at = now();
-                $config->save();
-            }
+            // Update both GitHub App and legacy PAT timestamps
+            // inside the import transaction. Failed imports roll back.
+            $config->last_synced_at = now();
+            $config->save();
 
             // Audit metadata only: never log the PAT or
             // complete GitHub issue descriptions.

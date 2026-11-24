@@ -21,6 +21,7 @@ class GithubAppConnection extends Model
             'repository_id' => 'integer',
             'verified_github_user_id' => 'integer',
             'verified_at' => 'datetime',
+            'last_synced_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

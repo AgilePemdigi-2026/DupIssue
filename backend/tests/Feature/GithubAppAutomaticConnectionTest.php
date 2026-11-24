@@ -309,7 +309,10 @@ class GithubAppAutomaticConnectionTest extends TestCase
         $old->repo_full_name = 'example/first';
         $old->verified_github_user_id = 999;
         $old->verified_at = now();
+        $old->last_synced_at = now()->subDay()->startOfSecond();
         $old->save();
+
+        $previousSync = $old->last_synced_at->toDateTimeString();
 
         $historicalIssue = new \App\Models\Issue([
             'title' => 'Historical GitHub issue',
@@ -398,6 +401,11 @@ class GithubAppAutomaticConnectionTest extends TestCase
             ->assertJsonPath('success', true)
             ->assertSessionHas('source_issue.github_app_preview');
 
+        $this->assertSame(
+            $previousSync,
+            $old->fresh()->last_synced_at->toDateTimeString()
+        );
+
         // Start replacement through the actual connection endpoint.
         $this->post($connectUrl)
             ->assertRedirect(route('sources.github.app.authorize'));
@@ -442,6 +450,11 @@ class GithubAppAutomaticConnectionTest extends TestCase
 
         $this->mockInstallationToken(444, 555);
 
+        $this->assertSame(
+            $previousSync,
+            $old->fresh()->last_synced_at->toDateTimeString()
+        );
+
         // Confirm the replacement.
         $this->post($saveUrl, [
             'repository_id' => 555,
@@ -459,16 +472,30 @@ class GithubAppAutomaticConnectionTest extends TestCase
             'repo_full_name' => 'example/second',
         ]);
 
+        $this->assertNull(
+            $old->fresh()->last_synced_at
+        );
+
         // Old preview must no longer authorize an import.
         $this->postJson($importUrl, [
             'confirmed' => true,
         ])->assertStatus(409);
+
+        $this->assertNull(
+            $old->fresh()->last_synced_at
+        );
+
+        $this->freezeTime();
 
         // Preview and import from the replacement repository.
         $this->postJson($previewUrl)
             ->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('preview.valid_count', 1);
+
+        $this->assertNull(
+            $old->fresh()->last_synced_at
+        );
 
         $this->postJson($importUrl, [
             'confirmed' => true,
@@ -493,6 +520,11 @@ class GithubAppAutomaticConnectionTest extends TestCase
 
         $this->assertDatabaseCount('issues', 2);
         $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertSame(
+            now()->toDateTimeString(),
+            $old->fresh()->last_synced_at->toDateTimeString()
+        );
     }
 
     public function test_forged_repository_cannot_be_saved(): void

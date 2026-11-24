@@ -254,6 +254,13 @@ class GithubAppConnectController extends Controller
 
             $connection->verified_at = now();
 
+            // A new connection or repository replacement has not
+            // synchronized any issues from its newly selected source.
+            // Reauthorization of the same connection keeps its history.
+            if (! $connection->exists || $isChanging) {
+                $connection->last_synced_at = null;
+            }
+
             $connection->save();
         });
 
