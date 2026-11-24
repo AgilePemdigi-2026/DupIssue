@@ -115,7 +115,7 @@
         @elseif ($issue->detection_status === 'FAILED')
             <div class="alert alert-warning" role="status">Deteksi kemiripan belum berhasil. Laporan issue tetap tersimpan.</div>
         @elseif ($issue->detection_status === 'COMPLETED')
-            <h2 class="h5 mt-4">Rekomendasi Issue Serupa</h2>
+            <h2 class="h5 mt-4">{{ $issue->source_type === 'CSV' ? 'Top 3 Rekomendasi Issue Serupa' : 'Rekomendasi Issue Serupa' }}</h2>
             @if ($recommendations->isEmpty())
                 <p class="text-muted">Belum ada kandidat yang memenuhi batas similarity 75% saat ini.</p>
             @else

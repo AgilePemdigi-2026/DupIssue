@@ -185,7 +185,11 @@ class IssueController extends Controller
             ->whereHas('candidateIssue', fn ($query) => $query->where('project_id', $project->getKey()))
             ->with('candidateIssue')
             ->orderByDesc('similarity_score')
-            ->limit(10)
+            ->when(
+                $issue->source_type === 'CSV',
+                fn ($query) => $query->orderBy('candidate_issue_id')
+            )
+            ->limit($issue->source_type === 'CSV' ? 3 : 10)
             ->get();
 
         $reviewHistory = collect();
