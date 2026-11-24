@@ -180,21 +180,26 @@ class GithubAppConnectController extends Controller
                 'Kepemilikan project telah berubah.'
             );
 
-            $patRepository = GithubConfig::query()
-                ->where('project_id', $project->id)
-                ->value('repo_full_name');
-
-            abort_if(
-                is_string($patRepository)
-                    && strcasecmp($patRepository, $repoFullName) !== 0,
-                409,
-                'Project ini sudah menggunakan repository GitHub lain melalui PAT.'
-            );
-
             $connection = GithubAppConnection::query()
                 ->where('project_id', $project->id)
                 ->lockForUpdate()
                 ->first();
+
+            // GitHub App takes priority over legacy PAT configuration.
+            // Preserve the PAT-only migration safeguard until explicit
+            // migration consent is supported.
+            if ($connection === null) {
+                $patRepository = GithubConfig::query()
+                    ->where('project_id', $project->id)
+                    ->value('repo_full_name');
+
+                abort_if(
+                    is_string($patRepository)
+                        && strcasecmp($patRepository, $repoFullName) !== 0,
+                    409,
+                    'Project ini sudah menggunakan repository GitHub lain melalui PAT.'
+                );
+            }
 
             // Detect concurrent changes made after OAuth was started.
             // The legacy setup callback has no snapshot: preserve its behavior.

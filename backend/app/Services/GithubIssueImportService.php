@@ -91,6 +91,19 @@ class GithubIssueImportService
 
             $this->authorizeOwner($lockedProject, $actor);
 
+            // Reject legacy PAT imports under the same project lock
+            // used by GitHub App connection changes.
+            if (
+                ! $isAppConnection
+                && GithubAppConnection::query()
+                    ->where('project_id', $lockedProject->id)
+                    ->exists()
+            ) {
+                throw ValidationException::withMessages([
+                    'github' => 'Koneksi PAT tidak aktif. Gunakan GitHub App.',
+                ]);
+            }
+
             // Lock dan verifikasi koneksi sesuai jenis autentikasi.
             $configQuery = $isAppConnection
                 ? GithubAppConnection::query()

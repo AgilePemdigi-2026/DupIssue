@@ -92,6 +92,170 @@ class GithubAppRepositoryReplacementTest extends TestCase
         ]);
     }
 
+    public function test_legacy_pat_does_not_block_confirmed_app_repository_replacement(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        // Simulate an existing project with both authentication methods.
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/old-repo';
+        $legacy->pat_encrypted = 'fake-legacy-pat-for-testing';
+        $legacy->last_synced_at = now()->subDay();
+        $legacy->save();
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+
+        $this->mockToken();
+
+        $pageUrl = route('sources.index', [
+            'project' => $project->id,
+        ]);
+
+        $response = $this->actingAs($owner)
+            ->withSession($this->verified($owner, $project, $old))
+            ->post($this->routeFor($project), [
+                'repository_id' => 333,
+                'confirm_replace' => '1',
+            ]);
+
+        // Legacy PAT must not prevent a verified and confirmed replacement.
+        $response->assertRedirect($pageUrl);
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'installation_id' => 111,
+            'repository_id' => 333,
+            'repo_full_name' => 'example/new-repo',
+        ]);
+
+        // Preserve legacy configuration without modifying its credentials.
+        $this->assertDatabaseHas('github_configs', [
+            'id' => $legacy->id,
+            'project_id' => $project->id,
+            'repo_full_name' => 'example/old-repo',
+        ]);
+
+        $this->assertTrue(
+            hash_equals(
+                $encryptedPat,
+                $legacy->fresh()->getRawOriginal('pat_encrypted')
+            ),
+            'Legacy encrypted credential must remain unchanged.'
+        );
+
+        $response->assertSessionMissing(
+            'source_issue.github_app_verified_repositories'
+        );
+    }
+
+    public function test_active_github_app_blocks_all_legacy_pat_endpoints(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/old-repo';
+        $legacy->pat_encrypted = 'fake-legacy-pat';
+        $legacy->save();
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+
+        Http::fake();
+
+        $params = ['project' => $project->id];
+
+        $credentials = [
+            'repo_full_name' => 'example/old-repo',
+            'pat' => 'fake-replacement-pat',
+        ];
+
+        $this->actingAs($owner);
+
+        $this->postJson(
+            route('sources.github.test', $params),
+            $credentials
+        )->assertStatus(409);
+
+        $this->postJson(
+            route('sources.github.save', $params),
+            $credentials
+        )->assertStatus(409);
+
+        $this->postJson(
+            route('sources.github.preview', $params)
+        )->assertStatus(409);
+
+        $this->postJson(
+            route('sources.github.import', $params),
+            ['confirmed' => true]
+        )->assertStatus(409);
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertTrue(hash_equals(
+            $encryptedPat,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        Http::assertNothingSent();
+    }
+
+    public function test_active_github_app_blocks_direct_legacy_pat_import(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/old-repo';
+        $legacy->pat_encrypted = 'fake-legacy-pat';
+        $legacy->save();
+
+        $issues = [[
+            'number' => 101,
+            'title' => 'Valid legacy issue',
+            'body' => 'A sufficiently long legacy issue description.',
+        ]];
+
+        $preview = app(
+            GithubIssuePreviewService::class
+        )->preview($project, $legacy->repo_full_name, $issues);
+
+        $fingerprint = hash(
+            'sha256',
+            json_encode($preview['rows'], JSON_THROW_ON_ERROR)
+        );
+
+        try {
+            app(\App\Services\GithubIssueImportService::class)->import(
+                $project,
+                $owner,
+                (int) $legacy->id,
+                $legacy->repo_full_name,
+                $issues,
+                $fingerprint
+            );
+
+            $this->fail('Legacy PAT import must be rejected.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertSame(
+                ['Koneksi PAT tidak aktif. Gunakan GitHub App.'],
+                $exception->errors()['github']
+            );
+        }
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        \Illuminate\Support\Facades\Bus::assertNothingDispatched();
+    }
+
     public function test_replacement_requires_explicit_consent(): void
     {
         [$owner, $project, $old] = $this->setupConnection();

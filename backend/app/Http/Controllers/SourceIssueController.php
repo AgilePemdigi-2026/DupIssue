@@ -45,6 +45,20 @@ class SourceIssueController extends Controller
     }
 
     /**
+     * Legacy PAT is unavailable when a GitHub App connection exists.
+     */
+    private function ensurePatAvailable(Project $project): void
+    {
+        abort_if(
+            GithubAppConnection::query()
+                ->where('project_id', $project->id)
+                ->exists(),
+            409,
+            'Koneksi PAT tidak aktif. Gunakan GitHub App.'
+        );
+    }
+
+    /**
      * Menampilkan halaman Sumber Issue.
      */
     public function index(Request $request, Project $project): View
@@ -127,6 +141,7 @@ class SourceIssueController extends Controller
         GithubApiClient $githubClient
     ): JsonResponse {
         $this->authorizeOwner($request, $project);
+        $this->ensurePatAvailable($project);
 
         $validator = Validator::make(
             $request->only(['repo_full_name', 'pat']),
@@ -193,6 +208,7 @@ class SourceIssueController extends Controller
         GithubApiClient $githubClient
     ): JsonResponse {
         $this->authorizeOwner($request, $project);
+        $this->ensurePatAvailable($project);
 
         $validator = Validator::make(
             $request->only(['repo_full_name', 'pat']),
@@ -252,17 +268,9 @@ class SourceIssueController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // One active repository per project, regardless of source.
-            $appRepository = GithubAppConnection::query()
-                ->where('project_id', $project->id)
-                ->value('repo_full_name');
-
-            abort_if(
-                is_string($appRepository)
-                    && strcasecmp($appRepository, $repoFullName) !== 0,
-                409,
-                'Project ini sudah menggunakan repository GitHub lain melalui GitHub App.'
-            );
+            // Recheck under the project lock to prevent concurrent
+            // PAT writes after GitHub App becomes active.
+            $this->ensurePatAvailable($project);
 
             $config = GithubConfig::query()
                 ->where('project_id', $project->id)
@@ -319,6 +327,7 @@ class SourceIssueController extends Controller
         GithubIssuePreviewService $previewService
     ): JsonResponse {
         $this->authorizeOwner($request, $project);
+        $this->ensurePatAvailable($project);
 
         // Batalkan metadata preview sebelumnya.
         $request->session()->forget(
@@ -687,6 +696,7 @@ class SourceIssueController extends Controller
         GithubIssueImportService $importService
     ): JsonResponse {
         $this->authorizeOwner($request, $project);
+        $this->ensurePatAvailable($project);
 
         // Require an explicit confirmation from the user.
         $request->validate([
