@@ -136,7 +136,17 @@ class SourceIssueControllerTest extends TestCase
             ->assertSee('Sumber Issue')
             ->assertSee('Upload Dataset')
             ->assertSee('GitHub')
-            ->assertSee($project->name);
+            ->assertSee($project->name)
+            ->assertSee('Hubungkan dengan GitHub App')
+            ->assertDontSee('Koneksi Manual (PAT)')
+            ->assertDontSee('id="github-connection-form"', false)
+            ->assertDontSee('name="pat"', false)
+            ->assertDontSee('js/github-connection.js', false)
+            ->assertDontSee('js/github-preview.js', false)
+            ->assertDontSee(
+                'id="github-legacy-migration-notice"',
+                false
+            );
     }
 
     public function test_reporter_member_cannot_open_source_issue_page(): void
@@ -295,8 +305,14 @@ class SourceIssueControllerTest extends TestCase
             ->assertViewIs('sources.index')
             ->assertViewHas('githubRepoFullName', 'demo/manual-repo')
             ->assertViewHas('githubAppRepoFullName', 'example/app-repo')
-            ->assertSee(
+            ->assertDontSee(
                 'data-connected-repo="demo/manual-repo"',
+                false
+            )
+            ->assertDontSee('id="github-connection-form"', false)
+            ->assertDontSee('name="pat"', false)
+            ->assertDontSee(
+                'id="github-legacy-migration-notice"',
                 false
             )
             ->assertSee('example/app-repo')
@@ -427,8 +443,12 @@ class SourceIssueControllerTest extends TestCase
         $response->assertOk()
             ->assertViewIs('sources.index')
             ->assertViewHas('githubRepoFullName', 'demo/bugs')
-            ->assertSee('data-connected-repo="demo/bugs"', false)
-            ->assertSee('value="demo/bugs"', false)
+            ->assertDontSee('data-connected-repo="demo/bugs"', false)
+            ->assertDontSee('value="demo/bugs"', false)
+            ->assertDontSee('name="pat"', false)
+            ->assertSee('id="github-legacy-migration-notice"', false)
+            ->assertSee('Migrasi GitHub App diperlukan.')
+            ->assertSee('demo/bugs')
             ->assertDontSee($pat);
 
         $this->assertSame(

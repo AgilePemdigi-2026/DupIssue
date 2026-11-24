@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Jobs\DetectIssueCandidatesJob;
-use App\Models\GithubConfig;
 use App\Models\GithubAppConnection;
 use App\Models\ImportBatch;
 use App\Models\Issue;
@@ -34,29 +33,21 @@ class GithubIssueImportService
      * @param array<int, mixed> $githubIssues
      * @return array<string, mixed>
      */
-    public function import(
+    public function importFromApp(
         Project $project,
         User $actor,
-        int $expectedConfigId,
+        int $expectedConnectionId,
+        int $expectedInstallationId,
+        int $expectedRepositoryId,
         string $expectedRepo,
         array $githubIssues,
-        string $expectedFingerprint,
-        ?int $expectedInstallationId = null,
-        ?int $expectedRepositoryId = null
+        string $expectedFingerprint
     ): array {
         $this->authorizeOwner($project, $actor);
 
-        $isAppConnection = $expectedInstallationId !== null
-            || $expectedRepositoryId !== null;
-
         if (
-            $isAppConnection
-            && (
-                $expectedInstallationId === null
-                || $expectedRepositoryId === null
-                || $expectedInstallationId <= 0
-                || $expectedRepositoryId <= 0
-            )
+            $expectedInstallationId <= 0
+            || $expectedRepositoryId <= 0
         ) {
             throw ValidationException::withMessages([
                 'github' => 'Identitas instalasi GitHub App tidak valid.',
@@ -75,11 +66,10 @@ class GithubIssueImportService
         return DB::transaction(function () use (
             $project,
             $actor,
-            $expectedConfigId,
+            $expectedConnectionId,
             $expectedRepo,
             $githubIssues,
             $expectedFingerprint,
-            $isAppConnection,
             $expectedInstallationId,
             $expectedRepositoryId
         ): array {
@@ -91,23 +81,8 @@ class GithubIssueImportService
 
             $this->authorizeOwner($lockedProject, $actor);
 
-            // Reject legacy PAT imports under the same project lock
-            // used by GitHub App connection changes.
-            if (
-                ! $isAppConnection
-                && GithubAppConnection::query()
-                    ->where('project_id', $lockedProject->id)
-                    ->exists()
-            ) {
-                throw ValidationException::withMessages([
-                    'github' => 'Koneksi PAT tidak aktif. Gunakan GitHub App.',
-                ]);
-            }
-
-            // Lock dan verifikasi koneksi sesuai jenis autentikasi.
-            $configQuery = $isAppConnection
-                ? GithubAppConnection::query()
-                : GithubConfig::query();
+            // Lock and verify the active GitHub App connection.
+            $configQuery = GithubAppConnection::query();
 
             $config = $configQuery
                 ->where('project_id', $lockedProject->id)
@@ -116,17 +91,12 @@ class GithubIssueImportService
 
             if (
                 $config === null
-                || (int) $config->id !== $expectedConfigId
+                || (int) $config->id !== $expectedConnectionId
                 || $config->repo_full_name !== $expectedRepo
-                || (
-                    $isAppConnection
-                    && (
-                        (int) $config->installation_id
-                            !== $expectedInstallationId
-                        || (int) $config->repository_id
-                            !== $expectedRepositoryId
-                    )
-                )
+                || (int) $config->installation_id
+                    !== $expectedInstallationId
+                || (int) $config->repository_id
+                    !== $expectedRepositoryId
             ) {
                 throw ValidationException::withMessages([
                     'github' =>
@@ -267,36 +237,6 @@ class GithubIssueImportService
                 'issue_ids' => $issueIds,
             ];
         }, 3);
-    }
-
-    /**
-     * Import issue dari koneksi GitHub App yang terverifikasi.
-     * Menggunakan mekanisme transaksi dan fingerprint yang
-     * sama dengan impor GitHub PAT.
-     *
-     * @param array<int, mixed> $githubIssues
-     * @return array<string, mixed>
-     */
-    public function importFromApp(
-        Project $project,
-        User $actor,
-        int $expectedConnectionId,
-        int $expectedInstallationId,
-        int $expectedRepositoryId,
-        string $expectedRepo,
-        array $githubIssues,
-        string $expectedFingerprint
-    ): array {
-        return $this->import(
-            $project,
-            $actor,
-            $expectedConnectionId,
-            $expectedRepo,
-            $githubIssues,
-            $expectedFingerprint,
-            $expectedInstallationId,
-            $expectedRepositoryId
-        );
     }
 
     private function authorizeOwner(

@@ -429,10 +429,10 @@ class GithubAppAutomaticConnectionTest extends TestCase
             $legacy->fresh()->getRawOriginal('pat_encrypted')
         ));
 
-        // PAT cannot be used after successful migration.
+        // The retired PAT endpoint cannot be used after migration.
         $this->postJson(
-            route('sources.github.preview', $params)
-        )->assertStatus(409);
+            "/projects/{$project->id}/sources/github/preview"
+        )->assertNotFound();
 
         Http::assertSentCount(5);
     }

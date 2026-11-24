@@ -287,7 +287,7 @@ class GithubAppSourcesPageTest extends TestCase
         );
     }
 
-    public function test_saved_connection_shows_app_operations_and_pat(): void
+    public function test_saved_connection_shows_app_operations_without_manual_pat(): void
     {
         $connection = new GithubAppConnection();
 
@@ -323,14 +323,29 @@ class GithubAppSourcesPageTest extends TestCase
             false
         );
 
-        $response->assertSee(
+        $response->assertDontSee(
             'Koneksi Manual (PAT)'
         );
 
-        $response->assertSee(
+        $response->assertDontSee(
             'id="github-connection-form"',
             false
         );
+
+        foreach ([
+            'id="github-pat"',
+            'id="github-repo"',
+            'id="github-test-btn"',
+            'id="github-save-btn"',
+            'id="github-preview-section"',
+            'id="github-import-btn"',
+            'name="pat"',
+            'js/github-connection.js',
+            'js/github-preview.js',
+            'id="github-legacy-migration-notice"',
+        ] as $marker) {
+            $response->assertDontSee($marker, false);
+        }
 
         $response->assertSee(
             'js/github-app.js'

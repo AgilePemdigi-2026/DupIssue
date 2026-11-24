@@ -151,7 +151,7 @@ class GithubAppRepositoryReplacementTest extends TestCase
         );
     }
 
-    public function test_active_github_app_blocks_all_legacy_pat_endpoints(): void
+    public function test_active_github_app_has_no_legacy_pat_endpoints(): void
     {
         [$owner, $project, $old] = $this->setupConnection();
 
@@ -165,8 +165,6 @@ class GithubAppRepositoryReplacementTest extends TestCase
 
         Http::fake();
 
-        $params = ['project' => $project->id];
-
         $credentials = [
             'repo_full_name' => 'example/old-repo',
             'pat' => 'fake-replacement-pat',
@@ -175,23 +173,23 @@ class GithubAppRepositoryReplacementTest extends TestCase
         $this->actingAs($owner);
 
         $this->postJson(
-            route('sources.github.test', $params),
+            "/projects/{$project->id}/sources/github/test",
             $credentials
-        )->assertStatus(409);
+        )->assertNotFound();
 
         $this->postJson(
-            route('sources.github.save', $params),
+            "/projects/{$project->id}/sources/github/save",
             $credentials
-        )->assertStatus(409);
+        )->assertNotFound();
 
         $this->postJson(
-            route('sources.github.preview', $params)
-        )->assertStatus(409);
+            "/projects/{$project->id}/sources/github/preview"
+        )->assertNotFound();
 
         $this->postJson(
-            route('sources.github.import', $params),
+            "/projects/{$project->id}/sources/github/import",
             ['confirmed' => true]
-        )->assertStatus(409);
+        )->assertNotFound();
 
         $this->assertDatabaseCount('issues', 0);
         $this->assertDatabaseCount('github_app_connections', 1);
@@ -204,56 +202,75 @@ class GithubAppRepositoryReplacementTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_active_github_app_blocks_direct_legacy_pat_import(): void
+    public function test_active_github_app_cannot_import_from_legacy_repository(): void
     {
-        [$owner, $project, $old] = $this->setupConnection();
+        [$owner, $project, $connection] = $this->setupConnection();
 
         \Illuminate\Support\Facades\Bus::fake();
 
         $legacy = new \App\Models\GithubConfig();
         $legacy->project_id = $project->id;
-        $legacy->repo_full_name = 'example/old-repo';
-        $legacy->pat_encrypted = 'fake-legacy-pat';
+        $legacy->repo_full_name = 'example/legacy-repo';
+        $legacy->pat_encrypted = 'fake-retired-pat';
         $legacy->save();
 
+        $encrypted = $legacy->getRawOriginal('pat_encrypted');
+
         $issues = [[
-            'number' => 101,
-            'title' => 'Valid legacy issue',
-            'body' => 'A sufficiently long legacy issue description.',
+            'number' => 1,
+            'title' => 'A valid legacy repository issue',
+            'body' => 'This issue must not be imported through a retired connection.',
         ]];
 
-        $preview = app(
-            GithubIssuePreviewService::class
-        )->preview($project, $legacy->repo_full_name, $issues);
+        $preview = app(GithubIssuePreviewService::class)->preview(
+            $project,
+            $legacy->repo_full_name,
+            $issues
+        );
 
         $fingerprint = hash(
             'sha256',
             json_encode($preview['rows'], JSON_THROW_ON_ERROR)
         );
 
+        $service = app(\App\Services\GithubIssueImportService::class);
+
+        $this->assertFalse(method_exists($service, 'import'));
+
         try {
-            app(\App\Services\GithubIssueImportService::class)->import(
+            $service->importFromApp(
                 $project,
                 $owner,
-                (int) $legacy->id,
+                $connection->id,
+                111,
+                222,
                 $legacy->repo_full_name,
                 $issues,
                 $fingerprint
             );
 
-            $this->fail('Legacy PAT import must be rejected.');
+            $this->fail('Repository PAT lama tidak boleh digunakan.');
         } catch (\Illuminate\Validation\ValidationException $exception) {
-            $this->assertSame(
-                ['Koneksi PAT tidak aktif. Gunakan GitHub App.'],
-                $exception->errors()['github']
-            );
+            $this->assertArrayHasKey('github', $exception->errors());
         }
 
         $this->assertDatabaseCount('issues', 0);
         $this->assertDatabaseCount('import_batches', 0);
+        $this->assertDatabaseCount('github_configs', 1);
         $this->assertDatabaseCount('github_app_connections', 1);
 
+        $this->assertSame(
+            'example/old-repo',
+            $connection->fresh()->repo_full_name
+        );
+
+        $this->assertTrue(hash_equals(
+            $encrypted,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
         \Illuminate\Support\Facades\Bus::assertNothingDispatched();
+        Http::assertNothingSent();
     }
 
     public function test_replacement_requires_explicit_consent(): void
