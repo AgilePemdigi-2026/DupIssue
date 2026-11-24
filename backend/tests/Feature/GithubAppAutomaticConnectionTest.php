@@ -258,6 +258,30 @@ class GithubAppAutomaticConnectionTest extends TestCase
             );
 
         $this->assertDatabaseCount('github_app_connections', 0);
+        // Regression: verified repositories must be selectable in the UI
+        // when OAuth returns repositories from multiple installations.
+        $page = $this->actingAs($owner)->get(
+            route('sources.index', ['project' => $project->id])
+        );
+
+        $page->assertOk();
+        $page->assertViewHas(
+            'githubAppVerifiedRepositories',
+            [
+                ['id' => 222, 'full_name' => 'example/first'],
+                ['id' => 555, 'full_name' => 'example/second'],
+            ]
+        );
+
+        $page->assertSee('example/first');
+        $page->assertSee('example/second');
+        $page->assertSee('name="repository_id"', false);
+        $page->assertSee('value="222"', false);
+        $page->assertSee('value="555"', false);
+
+        // Opening the selection page must not save a connection.
+        $this->assertDatabaseCount('github_app_connections', 0);
+
         $this->mockInstallationToken(444, 555);
         $this->actingAs($owner)->post(
             route('sources.github.app.save', ['project' => $project->id]),
@@ -270,6 +294,205 @@ class GithubAppAutomaticConnectionTest extends TestCase
             'repository_id' => 555,
             'repo_full_name' => 'example/second',
         ]);
+    }
+
+    public function test_connected_project_can_replace_repository_across_installations_and_import(): void
+    {
+        [$owner, $project] = $this->fixtures();
+
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $old = new \App\Models\GithubAppConnection();
+        $old->project_id = $project->id;
+        $old->installation_id = 111;
+        $old->repository_id = 222;
+        $old->repo_full_name = 'example/first';
+        $old->verified_github_user_id = 999;
+        $old->verified_at = now();
+        $old->save();
+
+        $historicalIssue = new \App\Models\Issue([
+            'title' => 'Historical GitHub issue',
+            'description' => 'This issue must remain after repository replacement.',
+        ]);
+        $historicalIssue->project_id = $project->id;
+        $historicalIssue->author_id = null;
+        $historicalIssue->source_type = 'GITHUB';
+        $historicalIssue->source_id = null;
+        $historicalIssue->github_repo = 'example/first';
+        $historicalIssue->github_number = 1;
+        $historicalIssue->source_url = 'https://github.com/example/first/issues/1';
+        $historicalIssue->status = 'OPEN';
+        $historicalIssue->detection_status = 'PENDING';
+        $historicalIssue->vote_count = 0;
+        $historicalIssue->duplicate_of = null;
+        $historicalIssue->save();
+
+        $this->fakeGithub(
+            [$this->installation(111), $this->installation(444)],
+            [
+                111 => [$this->repository(222, 'example/first')],
+                444 => [$this->repository(555, 'example/second')],
+            ]
+        );
+
+        $params = ['project' => $project->id];
+        $pageUrl = route('sources.index', $params);
+        $connectUrl = route('sources.github.app.connect', $params);
+        $saveUrl = route('sources.github.app.save', $params);
+        $previewUrl = route('sources.github.app.preview', $params);
+        $importUrl = route('sources.github.app.import', $params);
+
+        $fetch = $this->createMock(
+            \App\Services\GithubAppIssueFetchService::class
+        );
+
+        $expectedRepositories = [
+            [111, 222, 'example/first'],
+            [444, 555, 'example/second'],
+            [444, 555, 'example/second'],
+        ];
+
+        $fetchIndex = 0;
+
+        $fetch->expects($this->exactly(3))
+            ->method('fetchIssues')
+            ->willReturnCallback(
+                function ($connection) use (
+                    &$fetchIndex,
+                    $expectedRepositories
+                ) {
+                    $this->assertSame(
+                        $expectedRepositories[$fetchIndex++],
+                        [
+                            (int) $connection->installation_id,
+                            (int) $connection->repository_id,
+                            $connection->repo_full_name,
+                        ]
+                    );
+
+                    return [[
+                        'number' => 1,
+                        'title' => 'Repository issue',
+                        'body' => 'A sufficiently long issue description.',
+                    ]];
+                }
+            );
+
+        $this->app->instance(
+            \App\Services\GithubAppIssueFetchService::class,
+            $fetch
+        );
+
+        // Existing connection and replacement button.
+        $this->actingAs($owner)->get($pageUrl)
+            ->assertOk()
+            ->assertSee('example/first')
+            ->assertSee('Ganti Repository')
+            ->assertSee('data-bs-target="#githubAppReplaceModal"', false)
+            ->assertSee($connectUrl);
+
+        // Create a preview for the old repository.
+        $this->postJson($previewUrl)
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertSessionHas('source_issue.github_app_preview');
+
+        // Start replacement through the actual connection endpoint.
+        $this->post($connectUrl)
+            ->assertRedirect(route('sources.github.app.authorize'));
+
+        $authorization = $this->get(
+            route('sources.github.app.authorize')
+        )->assertStatus(302);
+
+        $redirect = $authorization->headers->get('Location');
+
+        $this->assertSame(
+            'github.com',
+            parse_url($redirect, PHP_URL_HOST)
+        );
+
+        parse_str(
+            (string) parse_url($redirect, PHP_URL_QUERY),
+            $oauthQuery
+        );
+
+        $this->assertArrayHasKey('state', $oauthQuery);
+
+        // OAuth callback discovers both installations.
+        $this->get(route('sources.github.app.callback', [
+            'state' => $oauthQuery['state'],
+            'code' => 'valid_code',
+        ]))->assertRedirect($pageUrl);
+
+        $this->get($pageUrl)
+            ->assertOk()
+            ->assertSee('example/first')
+            ->assertSee('example/second')
+            ->assertSee('name="repository_id"', false)
+            ->assertSee('name="confirm_replace"', false)
+            ->assertSee('Konfirmasi Ganti Repository');
+
+        // The old repository remains active until confirmation.
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'repository_id' => 222,
+        ]);
+
+        $this->mockInstallationToken(444, 555);
+
+        // Confirm the replacement.
+        $this->post($saveUrl, [
+            'repository_id' => 555,
+            'confirm_replace' => '1',
+        ])->assertRedirect($pageUrl)
+            ->assertSessionMissing('source_issue.github_app_preview')
+            ->assertSessionMissing('source_issue.github_app_verified_repositories');
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'installation_id' => 444,
+            'repository_id' => 555,
+            'repo_full_name' => 'example/second',
+        ]);
+
+        // Old preview must no longer authorize an import.
+        $this->postJson($importUrl, [
+            'confirmed' => true,
+        ])->assertStatus(409);
+
+        // Preview and import from the replacement repository.
+        $this->postJson($previewUrl)
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('preview.valid_count', 1);
+
+        $this->postJson($importUrl, [
+            'confirmed' => true,
+        ])->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('result.imported_count', 1)
+            ->assertSessionMissing('source_issue.github_app_preview');
+
+        $this->assertDatabaseHas('issues', [
+            'id' => $historicalIssue->id,
+            'project_id' => $project->id,
+            'github_repo' => 'example/first',
+            'github_number' => 1,
+        ]);
+
+        $this->assertDatabaseHas('issues', [
+            'project_id' => $project->id,
+            'source_type' => 'GITHUB',
+            'github_repo' => 'example/second',
+            'github_number' => 1,
+        ]);
+
+        $this->assertDatabaseCount('issues', 2);
+        $this->assertDatabaseCount('github_app_connections', 1);
     }
 
     public function test_forged_repository_cannot_be_saved(): void

@@ -64,8 +64,14 @@ class SourceIssueController extends Controller
             is_array($pending)
             && ($pending['project_id'] ?? null) === (int) $project->id
             && ($pending['actor_id'] ?? null) === (int) $request->user()->id
-            && is_int($pending['installation_id'] ?? null)
-            && $pending['installation_id'] > 0
+            && array_key_exists('installation_id', $pending)
+            && (
+                $pending['installation_id'] === null
+                || (
+                    is_int($pending['installation_id'])
+                    && $pending['installation_id'] > 0
+                )
+            )
             && is_int($pending['expires_at'] ?? null)
             && $pending['expires_at'] > now()->timestamp
             && is_array($pending['repositories'] ?? null)
@@ -75,6 +81,13 @@ class SourceIssueController extends Controller
                     ! is_array($repository)
                     || ! is_int($repository['id'] ?? null)
                     || $repository['id'] <= 0
+                    || (
+                        $pending['installation_id'] === null
+                        && (
+                            ! is_int($repository['installation_id'] ?? null)
+                            || $repository['installation_id'] <= 0
+                        )
+                    )
                     || ! is_string($repository['full_name'] ?? null)
                     || strlen($repository['full_name']) > 255
                     || ! preg_match(

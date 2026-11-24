@@ -90,6 +90,147 @@ class GithubAppSourcesPageTest extends TestCase
         );
     }
 
+    public function test_multi_installation_only_displays_repositories_with_valid_installation_ids(): void
+    {
+        $session = $this->verifiedSession();
+        $session['installation_id'] = null;
+        $session['repositories'] = [
+            [
+                'id' => 1001,
+                'full_name' => 'example/valid-first',
+                'installation_id' => 111,
+            ],
+            [
+                'id' => 1002,
+                'full_name' => 'example/valid-second',
+                'installation_id' => 444,
+            ],
+            [
+                'id' => 1003,
+                'full_name' => 'example/invalid-missing',
+            ],
+            [
+                'id' => 1004,
+                'full_name' => 'example/invalid-null',
+                'installation_id' => null,
+            ],
+            [
+                'id' => 1005,
+                'full_name' => 'example/invalid-zero',
+                'installation_id' => 0,
+            ],
+            [
+                'id' => 1006,
+                'full_name' => 'example/invalid-negative',
+                'installation_id' => -111,
+            ],
+            [
+                'id' => 1007,
+                'full_name' => 'example/invalid-string',
+                'installation_id' => '444',
+            ],
+        ];
+
+        $response = $this->actingAs($this->owner)
+            ->withSession([
+                'source_issue.github_app_verified_repositories'
+                    => $session,
+            ])
+            ->get($this->pageUrl());
+
+        $response->assertOk();
+
+        $response->assertViewHas(
+            'githubAppVerifiedRepositories',
+            [
+                ['id' => 1001, 'full_name' => 'example/valid-first'],
+                ['id' => 1002, 'full_name' => 'example/valid-second'],
+            ]
+        );
+
+        $response->assertSee('example/valid-first');
+        $response->assertSee('example/valid-second');
+
+        foreach ([
+            'example/invalid-missing',
+            'example/invalid-null',
+            'example/invalid-zero',
+            'example/invalid-negative',
+            'example/invalid-string',
+        ] as $repository) {
+            $response->assertDontSee($repository);
+        }
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+    }
+
+    public function test_missing_or_invalid_session_installation_id_is_rejected(): void
+    {
+        $sessions = [];
+
+        $missing = $this->verifiedSession();
+        unset($missing['installation_id']);
+        $sessions[] = $missing;
+
+        foreach ([0, -12345, '12345'] as $invalidId) {
+            $session = $this->verifiedSession();
+            $session['installation_id'] = $invalidId;
+            $sessions[] = $session;
+        }
+
+        foreach ($sessions as $session) {
+            $response = $this->actingAs($this->owner)
+                ->withSession([
+                    'source_issue.github_app_verified_repositories'
+                        => $session,
+                ])
+                ->get($this->pageUrl());
+
+            $response->assertOk();
+            $response->assertViewHas(
+                'githubAppVerifiedRepositories',
+                []
+            );
+            $response->assertDontSee('example/verified-repo');
+        }
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+    }
+
+    public function test_multi_installation_rejects_expired_or_mismatched_session(): void
+    {
+        $base = $this->verifiedSession();
+        $base['installation_id'] = null;
+        $base['repositories'][0]['installation_id'] = 111;
+
+        $expired = $base;
+        $expired['expires_at'] = now()->subMinute()->timestamp;
+
+        $wrongActor = $base;
+        $wrongActor['actor_id'] = (int) $this->owner->id + 999;
+
+        $wrongProject = $base;
+        $wrongProject['project_id'] = (int) $this->project->id + 999;
+
+        foreach ([$expired, $wrongActor, $wrongProject] as $session) {
+            $response = $this->actingAs($this->owner)
+                ->withSession([
+                    'source_issue.github_app_verified_repositories'
+                        => $session,
+                ])
+                ->get($this->pageUrl());
+
+            $response->assertOk();
+            $response->assertViewHas(
+                'githubAppVerifiedRepositories',
+                []
+            );
+            $response->assertDontSee('example/verified-repo');
+        }
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+    }
+
     public function test_expired_verification_is_hidden(): void
     {
         $session = $this->verifiedSession();
