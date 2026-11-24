@@ -642,6 +642,27 @@
                                             repository aktif pada project ini.
                                         </label>
                                     </div>
+                                @elseif(!empty($githubRepoFullName))
+                                    <div class="alert alert-warning small">
+                                        Repository PAT sebelumnya:
+                                        <strong>{{ $githubRepoFullName }}</strong>.
+                                        GitHub App akan menjadi satu-satunya
+                                        koneksi GitHub aktif setelah migrasi.
+                                        Issue yang sudah diimpor tetap tersimpan.
+                                    </div>
+
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input"
+                                               type="checkbox" value="1"
+                                               name="confirm_replace"
+                                               id="githubAppConfirmMigration"
+                                               required>
+                                        <label class="form-check-label"
+                                               for="githubAppConfirmMigration">
+                                            Saya menyetujui migrasi koneksi
+                                            PAT ke GitHub App.
+                                        </label>
+                                    </div>
                                 @endif
 
                                 <button type="submit"
@@ -649,7 +670,9 @@
                                     <i class="bi bi-check-circle me-1"></i>
                                     {{ !empty($githubAppRepoFullName)
                                         ? 'Konfirmasi Ganti Repository'
-                                        : 'Simpan Koneksi GitHub App' }}
+                                        : (!empty($githubRepoFullName)
+                                            ? 'Konfirmasi Migrasi GitHub App'
+                                            : 'Simpan Koneksi GitHub App') }}
                                 </button>
                             </form>
                         </div>

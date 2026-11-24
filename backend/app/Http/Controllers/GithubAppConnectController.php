@@ -115,7 +115,21 @@ class GithubAppConnectController extends Controller
             || strcasecmp($before->repo_full_name, $repoFullName) !== 0
         );
 
-        if ($replacement) {
+        $legacyMigration = false;
+
+        if ($before === null) {
+            $legacySnapshot = $this->legacyPatSnapshot($project);
+
+            abort_unless(
+                $legacySnapshot === ($pending['expected_legacy_pat'] ?? null),
+                409,
+                'Konfigurasi GitHub lama berubah. Ulangi otorisasi GitHub.'
+            );
+
+            $legacyMigration = $legacySnapshot !== null;
+        }
+
+        if ($replacement || $legacyMigration) {
             $request->validate([
                 'confirm_replace' => ['required', 'accepted'],
             ]);
@@ -185,19 +199,21 @@ class GithubAppConnectController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            // GitHub App takes priority over legacy PAT configuration.
-            // Preserve the PAT-only migration safeguard until explicit
-            // migration consent is supported.
+            // Validate migration again under the project lock.
+            // Keep historical PAT configuration unchanged.
             if ($connection === null) {
-                $patRepository = GithubConfig::query()
-                    ->where('project_id', $project->id)
-                    ->value('repo_full_name');
+                $legacySnapshot = $this->legacyPatSnapshot($lockedProject);
 
-                abort_if(
-                    is_string($patRepository)
-                        && strcasecmp($patRepository, $repoFullName) !== 0,
+                abort_unless(
+                    $legacySnapshot === ($pending['expected_legacy_pat'] ?? null),
                     409,
-                    'Project ini sudah menggunakan repository GitHub lain melalui PAT.'
+                    'Konfigurasi GitHub lama berubah. Ulangi otorisasi GitHub.'
+                );
+
+                abort_unless(
+                    $legacySnapshot === null || $confirmedReplace,
+                    422,
+                    'Migrasi koneksi PAT ke GitHub App harus dikonfirmasi.'
                 );
             }
 
@@ -563,6 +579,8 @@ class GithubAppConnectController extends Controller
                 'Tidak ada repository yang dapat diakses melalui GitHub App.'
             );
 
+            $legacySnapshot = $this->legacyPatSnapshot($project);
+
             $request->session()->put(
                 'source_issue.github_app_verified_repositories',
                 [
@@ -575,6 +593,7 @@ class GithubAppConnectController extends Controller
                     'github_user_id' => $identity->json('id'),
                     'repositories' => array_values($verified),
                     'expected_connection' => $pending['expected_connection'] ?? null,
+                    'expected_legacy_pat' => $legacySnapshot,
                     'expires_at' => now()->addMinutes(10)->timestamp,
                 ]
             );
@@ -603,7 +622,10 @@ class GithubAppConnectController extends Controller
         if (
             $pending['installation_id'] === null
             && count($verified) === 1
-            && ($connected === null || $sameRepository)
+            && (
+                ($connected === null && $legacySnapshot === null)
+                || $sameRepository
+            )
         ) {
             // User initiated the link; one accessible repository needs
             // no further selection. Reuse saveConnection's scoped token,
@@ -975,4 +997,24 @@ class GithubAppConnectController extends Controller
 
         return $response;
     }
+
+    /**
+     * Read only legacy repository metadata, never its credential.
+     */
+    private function legacyPatSnapshot(Project $project): ?array
+    {
+        $legacy = GithubConfig::query()
+            ->where('project_id', $project->id)
+            ->first(['id', 'repo_full_name']);
+
+        if ($legacy === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $legacy->id,
+            'repo_full_name' => $legacy->repo_full_name,
+        ];
+    }
+
 }

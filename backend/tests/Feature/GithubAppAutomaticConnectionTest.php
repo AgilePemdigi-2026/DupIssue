@@ -193,6 +193,402 @@ class GithubAppAutomaticConnectionTest extends TestCase
         Http::assertSentCount(5);
     }
 
+    public function test_pat_only_project_requires_confirmed_migration_to_github_app(): void
+    {
+        [$owner, $project] = $this->fixtures();
+
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/legacy-repo';
+        $legacy->pat_encrypted = 'fake-legacy-pat-for-testing';
+        $legacy->last_synced_at = now()->subDay();
+        $legacy->save();
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+        $previousSync = $legacy->last_synced_at->toDateTimeString();
+
+        $legacyPreview = [
+            'project_id' => (int) $project->id,
+            'actor_id' => (int) $owner->id,
+            'config_id' => (int) $legacy->id,
+            'repo_full_name' => 'example/legacy-repo',
+            'fingerprint' => str_repeat('a', 64),
+            'expires_at' => now()->addMinutes(30)->timestamp,
+        ];
+
+        $this->fakeGithub(
+            [$this->installation(111)],
+            [111 => [
+                $this->repository(333, 'example/new-repo'),
+            ]]
+        );
+
+        $this->mockInstallationToken(111, 333);
+
+        $params = ['project' => $project->id];
+        $pageUrl = route('sources.index', $params);
+        $saveUrl = route('sources.github.app.save', $params);
+
+        $this->actingAs($owner)
+            ->withSession([
+                'source_issue.github_preview' => $legacyPreview,
+            ])
+            ->post(route('sources.github.app.connect', $params))
+            ->assertRedirect(route('sources.github.app.authorize'));
+
+        $authorization = $this->get(
+            route('sources.github.app.authorize')
+        )->assertStatus(302);
+
+        parse_str(
+            (string) parse_url(
+                $authorization->headers->get('Location'),
+                PHP_URL_QUERY
+            ),
+            $oauthQuery
+        );
+
+        $this->assertArrayHasKey('state', $oauthQuery);
+
+        // Even one accessible repository must require migration consent.
+        $response = $this->get(
+            route('sources.github.app.callback', [
+                'state' => $oauthQuery['state'],
+                'code' => 'valid_code',
+            ])
+        );
+
+        $response->assertRedirect($pageUrl);
+
+        $response->assertSessionHas(
+            'source_issue.github_app_verified_repositories',
+            fn ($data) => count($data['repositories']) === 1
+                && $data['repositories'][0]['id'] === 333
+        );
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        Http::assertSentCount(4);
+
+        // The selection page must expose explicit migration consent.
+        $this->get($pageUrl)
+            ->assertOk()
+            ->assertSee('example/legacy-repo')
+            ->assertSee('example/new-repo')
+            ->assertSee('name="confirm_replace"', false);
+
+        // Refuse migration before explicit confirmation.
+        $this->from($pageUrl)
+            ->post($saveUrl, [
+                'repository_id' => 333,
+            ])
+            ->assertSessionHasErrors('confirm_replace');
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        Http::assertSentCount(4);
+
+        // Complete the migration only after consent.
+        $this->post($saveUrl, [
+            'repository_id' => 333,
+            'confirm_replace' => '1',
+        ])->assertRedirect($pageUrl)
+            ->assertSessionMissing(
+                'source_issue.github_app_verified_repositories'
+            )
+            ->assertSessionMissing('source_issue.github_preview');
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'installation_id' => 111,
+            'repository_id' => 333,
+            'repo_full_name' => 'example/new-repo',
+            'last_synced_at' => null,
+        ]);
+
+        $this->assertDatabaseHas('github_configs', [
+            'id' => $legacy->id,
+            'project_id' => $project->id,
+            'repo_full_name' => 'example/legacy-repo',
+        ]);
+
+        $this->assertTrue(hash_equals(
+            $encryptedPat,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        $this->assertSame(
+            $previousSync,
+            $legacy->fresh()->last_synced_at->toDateTimeString()
+        );
+
+        Http::assertSentCount(5);
+    }
+
+    private function createLegacyPatConfig(
+        Project $project,
+        string $repository
+    ): \App\Models\GithubConfig {
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = $repository;
+        $legacy->pat_encrypted = 'fake-legacy-pat-for-testing';
+        $legacy->last_synced_at = now()->subDay();
+        $legacy->save();
+
+        return $legacy;
+    }
+
+    public function test_same_repository_pat_migration_requires_explicit_consent(): void
+    {
+        [$owner, $project] = $this->fixtures();
+
+        $legacy = $this->createLegacyPatConfig(
+            $project,
+            'example/same-repo'
+        );
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+
+        $this->fakeGithub(
+            [$this->installation(111)],
+            [111 => [
+                $this->repository(222, 'example/same-repo'),
+            ]]
+        );
+
+        $params = ['project' => $project->id];
+        $pageUrl = route('sources.index', $params);
+        $saveUrl = route('sources.github.app.save', $params);
+
+        $response = $this->actingAs($owner)
+            ->withSession($this->oauthSession($owner, $project))
+            ->get(route('sources.github.app.callback', [
+                'state' => str_repeat('a', 64),
+                'code' => 'valid_code',
+            ]));
+
+        $response->assertRedirect($pageUrl);
+
+        $response->assertSessionHas(
+            'source_issue.github_app_verified_repositories'
+        );
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        Http::assertSentCount(4);
+
+        $this->get($pageUrl)
+            ->assertOk()
+            ->assertSee('name="confirm_replace"', false)
+            ->assertSee('Konfirmasi Migrasi GitHub App');
+
+        // Missing consent must not activate GitHub App.
+        $this->from($pageUrl)
+            ->post($saveUrl, [
+                'repository_id' => 222,
+            ])->assertSessionHasErrors('confirm_replace');
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        Http::assertSentCount(4);
+
+        // Explicit rejection must also prevent migration.
+        $this->post($saveUrl, [
+            'repository_id' => 222,
+            'confirm_replace' => '0',
+        ])->assertSessionHasErrors('confirm_replace');
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        Http::assertSentCount(4);
+
+        $this->mockInstallationToken(111, 222);
+
+        // Activate GitHub App only after explicit consent.
+        $this->post($saveUrl, [
+            'repository_id' => 222,
+            'confirm_replace' => '1',
+        ])->assertRedirect($pageUrl);
+
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'installation_id' => 111,
+            'repository_id' => 222,
+            'repo_full_name' => 'example/same-repo',
+            'last_synced_at' => null,
+        ]);
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+        $this->assertDatabaseCount('github_configs', 1);
+
+        $this->assertTrue(hash_equals(
+            $encryptedPat,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        // PAT cannot be used after successful migration.
+        $this->postJson(
+            route('sources.github.preview', $params)
+        )->assertStatus(409);
+
+        Http::assertSentCount(5);
+    }
+
+    public function test_pat_migration_rejects_changed_legacy_repository_after_oauth(): void
+    {
+        [$owner, $project] = $this->fixtures();
+
+        $legacy = $this->createLegacyPatConfig(
+            $project,
+            'example/legacy-repo'
+        );
+
+        $this->fakeGithub(
+            [$this->installation(111)],
+            [111 => [
+                $this->repository(333, 'example/new-repo'),
+            ]]
+        );
+
+        $params = ['project' => $project->id];
+
+        $response = $this->actingAs($owner)
+            ->withSession($this->oauthSession($owner, $project))
+            ->get(route('sources.github.app.callback', [
+                'state' => str_repeat('a', 64),
+                'code' => 'valid_code',
+            ]));
+
+        $response->assertRedirect(
+            route('sources.index', $params)
+        );
+
+        $response->assertSessionHas(
+            'source_issue.github_app_verified_repositories',
+            fn ($data) => $data['expected_legacy_pat'] === [
+                'id' => (int) $legacy->id,
+                'repo_full_name' => 'example/legacy-repo',
+            ]
+        );
+
+        // Simulate a legacy configuration change after OAuth.
+        $legacy->repo_full_name = 'example/changed-repo';
+        $legacy->save();
+
+        $mock = $this->createMock(
+            GithubAppInstallationTokenService::class
+        );
+
+        $mock->expects($this->never())
+            ->method('createForRepository');
+
+        $this->app->instance(
+            GithubAppInstallationTokenService::class,
+            $mock
+        );
+
+        $this->post(
+            route('sources.github.app.save', $params),
+            [
+                'repository_id' => 333,
+                'confirm_replace' => '1',
+            ]
+        )->assertStatus(409);
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        $this->assertDatabaseHas('github_configs', [
+            'id' => $legacy->id,
+            'project_id' => $project->id,
+            'repo_full_name' => 'example/changed-repo',
+        ]);
+
+        Http::assertSentCount(4);
+    }
+
+    public function test_pat_migration_rechecks_legacy_snapshot_inside_transaction(): void
+    {
+        [$owner, $project] = $this->fixtures();
+
+        $legacy = $this->createLegacyPatConfig(
+            $project,
+            'example/legacy-repo'
+        );
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+
+        $this->fakeGithub(
+            [$this->installation(111)],
+            [111 => [
+                $this->repository(333, 'example/new-repo'),
+            ]]
+        );
+
+        $params = ['project' => $project->id];
+
+        $this->actingAs($owner)
+            ->withSession($this->oauthSession($owner, $project))
+            ->get(route('sources.github.app.callback', [
+                'state' => str_repeat('a', 64),
+                'code' => 'valid_code',
+            ]))
+            ->assertRedirect(
+                route('sources.index', $params)
+            );
+
+        $mock = $this->createMock(
+            GithubAppInstallationTokenService::class
+        );
+
+        $mock->expects($this->once())
+            ->method('createForRepository')
+            ->with(111, 333)
+            ->willReturnCallback(
+                function () use ($legacy): string {
+                    // Simulate a change during external token
+                    // verification, after the initial snapshot check.
+                    $legacy->repo_full_name =
+                        'example/concurrently-changed-repo';
+
+                    $legacy->save();
+
+                    return 'fake-installation-token';
+                }
+            );
+
+        $this->app->instance(
+            GithubAppInstallationTokenService::class,
+            $mock
+        );
+
+        $this->post(
+            route('sources.github.app.save', $params),
+            [
+                'repository_id' => 333,
+                'confirm_replace' => '1',
+            ]
+        )->assertStatus(409);
+
+        // The transaction must not activate an obsolete selection.
+        $this->assertDatabaseCount('github_app_connections', 0);
+
+        $this->assertDatabaseHas('github_configs', [
+            'id' => $legacy->id,
+            'project_id' => $project->id,
+            'repo_full_name' => 'example/concurrently-changed-repo',
+        ]);
+
+        $this->assertTrue(hash_equals(
+            $encryptedPat,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        Http::assertSentCount(5);
+    }
+
     public function test_multiple_repos_require_selection_without_autosaving(): void
     {
         [$owner, $project] = $this->fixtures();
