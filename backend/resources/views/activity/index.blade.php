@@ -15,9 +15,6 @@
         <a href="{{ route('projects.activity.export', array_merge(['project' => $project], request()->query())) }}" class="btn btn-outline-success btn-sm d-flex align-items-center gap-1">
             <i class="bi bi-download"></i> Ekspor CSV
         </a>
-        <a href="{{ route('projects.show', ['id' => $project->id]) }}" class="btn btn-outline-secondary btn-sm">
-            Kembali ke Project
-        </a>
     </div>
 </div>
 

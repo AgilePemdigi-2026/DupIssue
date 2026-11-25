@@ -811,4 +811,111 @@ class ActivityLogViewAndExportTest extends TestCase
         $this->assertStringContainsString("'\r@SUM(A1:A10)", $content);
         $this->assertStringContainsString("'   +SUM(B1:B10)", $content);
     }
+
+    public function test_create_issue_records_activity_log_in_transaction_and_displays_on_activity_log(): void
+    {
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $owner = User::factory()->create(['role' => 'MAINTAINER']);
+        $reporter = User::factory()->create(['role' => 'REPORTER']);
+        $project = Project::factory()->create(['owner_id' => $owner->id]);
+
+        \App\Models\Membership::factory()->create([
+            'project_id' => $project->id,
+            'user_id' => $reporter->id,
+            'is_active' => true,
+        ]);
+
+        // Submit issue via IssueController::store()
+        $this->actingAs($reporter)
+            ->post(route('issues.store', ['project' => $project]), [
+                'title' => 'Halaman profil tidak terbuka',
+                'description' => 'Terjadi error 500 ketika membuka halaman profil user.',
+            ])
+            ->assertRedirect();
+
+        $issue = Issue::where('project_id', $project->id)->first();
+        $this->assertNotNull($issue);
+
+        $this->assertDatabaseHas('activity_logs', [
+            'project_id' => $project->id,
+            'user_id' => $reporter->id,
+            'issue_id' => $issue->id,
+            'action' => 'CREATE_ISSUE',
+        ]);
+
+        // Verify it renders on Activity Log under ISSUE_SOURCE category
+        $this->actingAs($owner)
+            ->get(route('projects.activity.index', ['project' => $project, 'category' => 'ISSUE_SOURCE']))
+            ->assertOk()
+            ->assertSee('CREATE_ISSUE')
+            ->assertSee($reporter->name)
+            ->assertSee("#{$issue->id}");
+    }
+
+    public function test_real_csv_github_pat_and_github_app_producers_display_on_activity_log(): void
+    {
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $owner = User::factory()->create(['role' => 'MAINTAINER']);
+        $project = Project::factory()->create(['owner_id' => $owner->id]);
+
+        // 1. Real CSV Import producer
+        $file = \Illuminate\Http\UploadedFile::fake()->createWithContent(
+            'issues.csv',
+            "source_id,title,description\nCSV-1,Bug CSV Import,Deskripsi bug impor CSV yang cukup panjang.\n"
+        );
+        $parsedCsv = app(\App\Services\CsvIssueReader::class)->read($file);
+        app(\App\Services\CsvIssueImportService::class)->import($project, $owner, $parsedCsv, 'issues.csv');
+
+        // 2. Real GitHub PAT Import producer
+        $config = new \App\Models\GithubConfig();
+        $config->project_id = $project->id;
+        $config->repo_full_name = 'acme/pat-repo';
+        $config->pat_encrypted = 'encrypted_pat_value';
+        $config->save();
+
+        $patIssues = [
+            [
+                'number' => 11,
+                'title' => 'Bug dari GitHub PAT',
+                'body' => 'Deskripsi bug dari GitHub PAT yang cukup panjang untuk validasi.',
+            ],
+        ];
+        $patPreview = app(\App\Services\GithubIssuePreviewService::class)->preview($project, 'acme/pat-repo', $patIssues);
+        $patFingerprint = hash('sha256', json_encode($patPreview['rows'], JSON_THROW_ON_ERROR));
+        app(\App\Services\GithubIssueImportService::class)->import($project, $owner, $config->id, 'acme/pat-repo', $patIssues, $patFingerprint);
+
+        // 3. Real GitHub App Import producer
+        $appConn = new \App\Models\GithubAppConnection();
+        $appConn->project_id = $project->id;
+        $appConn->installation_id = 99911;
+        $appConn->repository_id = 88822;
+        $appConn->repo_full_name = 'acme/app-repo';
+        $appConn->verified_github_user_id = 777;
+        $appConn->verified_at = now();
+        $appConn->save();
+
+        $appIssues = [
+            [
+                'number' => 22,
+                'title' => 'Bug dari GitHub App',
+                'body' => 'Deskripsi bug dari GitHub App yang cukup panjang untuk validasi.',
+            ],
+        ];
+        $appPreview = app(\App\Services\GithubIssuePreviewService::class)->preview($project, 'acme/app-repo', $appIssues);
+        $appFingerprint = hash('sha256', json_encode($appPreview['rows'], JSON_THROW_ON_ERROR));
+        app(\App\Services\GithubIssueImportService::class)->importFromApp($project, $owner, $appConn->id, 99911, 88822, 'acme/app-repo', $appIssues, $appFingerprint);
+
+        // Verify all 3 appear on Activity Log under ISSUE_SOURCE and lastSync is updated
+        $response = $this->actingAs($owner)
+            ->get(route('projects.activity.index', ['project' => $project, 'category' => 'ISSUE_SOURCE']))
+            ->assertOk()
+            ->assertSee('IMPORT_CSV')
+            ->assertSee('IMPORT_GITHUB')
+            ->assertSee('acme/pat-repo')
+            ->assertSee('acme/app-repo');
+
+        $this->assertNotEquals('Belum pernah', $response->viewData('lastSync'));
+    }
 }

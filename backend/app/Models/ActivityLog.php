@@ -76,8 +76,7 @@ class ActivityLog extends Model
             'DUPLICATE_CORRECTED' => self::CATEGORY_DUPLICATE_REVIEW,
             'VOTE_ADDED' => self::CATEGORY_OTHER,
             'VOTE_REMOVED' => self::CATEGORY_OTHER,
-
-            // Forward-compatible with PR #48 (recorded as GAP until merged to main)
+            'CREATE_ISSUE' => self::CATEGORY_ISSUE_SOURCE,
             'IMPORT_CSV' => self::CATEGORY_ISSUE_SOURCE,
             'IMPORT_GITHUB' => self::CATEGORY_ISSUE_SOURCE,
         ];

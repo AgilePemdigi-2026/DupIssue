@@ -40,6 +40,9 @@ class ActivityLogModelTest extends TestCase
 
         $logVote = new ActivityLog(['action' => 'VOTE_ADDED']);
         $this->assertSame(ActivityLog::CATEGORY_OTHER, $logVote->ui_category);
+
+        $logCreateIssue = new ActivityLog(['action' => 'CREATE_ISSUE']);
+        $this->assertSame(ActivityLog::CATEGORY_ISSUE_SOURCE, $logCreateIssue->ui_category);
     }
 
     public function test_category_mapping_for_gap_actions_and_unknown_actions(): void
