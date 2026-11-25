@@ -3,6 +3,19 @@
 @section('title', $project->name . ' - DupIssue')
 
 @section('content')
+@if(auth()->user()?->role === 'REPORTER')
+<div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+        <h1 class="h4 fw-bold mb-2">{{ $project->name }}</h1>
+        <p class="text-muted mb-3">{{ $project->description ?: 'Lihat dan laporkan issue untuk project ini.' }}</p>
+        <div class="d-flex flex-wrap gap-2 di-actions">
+            <a href="{{ route('issues.index', ['project' => $project]) }}" class="btn btn-primary">Lihat Daftar Issue</a>
+            <a href="{{ route('issues.create', ['project' => $project]) }}" class="btn btn-outline-primary">Submit Issue</a>
+            <a href="{{ route('projects.index') }}" class="btn btn-outline-secondary">Daftar Project</a>
+        </div>
+    </div>
+</div>
+@else
 <div class="row g-4 di-project-tiles">
     <div class="col-12">
         <div class="card shadow-sm border-0">
@@ -18,22 +31,6 @@
                         <p class="text-muted mb-0">
                             {{ $project->description ?: 'Tidak ada deskripsi untuk project ini.' }}
                         </p>
-                    </div>
-                    <div class="d-flex gap-2 di-toolbar-actions">
-                        @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
-                            <a href="{{ route('projects.duplicates.index', ['project' => $project]) }}" class="btn btn-warning">
-                                <i class="bi bi-intersect me-1"></i> Review Kandidat Duplikat
-                            </a>
-                            <a href="{{ route('projects.activity.index', ['project' => $project]) }}" class="btn btn-outline-info">
-                                <i class="bi bi-clock-history me-1"></i> Riwayat &amp; Log
-                            </a>
-                            <a href="/projects/{{ $project->id }}/members" class="btn btn-outline-primary">
-                                <i class="bi bi-people me-1"></i> Anggota Project
-                            </a>
-                            <a href="/projects/{{ $project->id }}/settings" class="btn btn-outline-secondary">
-                                <i class="bi bi-gear me-1"></i> Edit Project
-                            </a>
-                        @endif
                     </div>
                 </div>
             </div>
@@ -118,5 +115,95 @@
             </div>
         </div>
     </div>
+
+    <!-- Navigasi Sumber Issue: khusus Maintainer pemilik project -->
+    @if((int) $project->owner_id === (int) auth()->id())
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="bg-primary-subtle text-primary p-2 rounded me-3">
+                            <i class="bi bi-database-fill-gear fs-4"></i>
+                        </div>
+                        <div>
+                            <h5 class="fw-bold mb-0">Sumber Issue</h5>
+                            <small class="text-muted">
+                                Integrasi CSV dan GitHub
+                            </small>
+                        </div>
+                    </div>
+
+                    <p class="text-muted small">
+                        Tambahkan issue melalui dataset CSV atau
+                        repository GitHub dengan validasi sebelum impor.
+                    </p>
+
+                    <a href="{{ route('sources.index', ['project' => $project->id]) }}"
+                       class="btn btn-outline-primary btn-sm w-100">
+                        Buka Sumber Issue
+                    </a>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    <!-- Navigasi Dashboard Statistik: khusus Maintainer pemilik project -->
+    @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="bg-primary-subtle text-primary p-2 rounded me-3">
+                            <i class="bi bi-bar-chart-line-fill fs-4"></i>
+                        </div>
+                        <div>
+                            <h5 class="fw-bold mb-0">Dashboard Statistik</h5>
+                            <small class="text-muted">Statistik dan performa project</small>
+                        </div>
+                    </div>
+                    <p class="text-muted small">
+                        Pantau distribusi status issue, statistik duplikasi,
+                        kandidat duplikat, dan performa triase project.
+                    </p>
+                    <div class="di-card-actions">
+                        <a href="{{ route('projects.dashboard', ['project' => $project]) }}"
+                           class="btn btn-outline-primary btn-sm w-100">
+                            Buka Dashboard Statistik
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    <!-- Navigasi Riwayat & Log: khusus Maintainer pemilik project -->
+    @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="bg-primary-subtle text-primary p-2 rounded me-3">
+                            <i class="bi bi-clock-history fs-4"></i>
+                        </div>
+                        <div>
+                            <h5 class="fw-bold mb-0">Riwayat &amp; Log</h5>
+                            <small class="text-muted">Audit trail aktivitas project</small>
+                        </div>
+                    </div>
+                    <p class="text-muted small">
+                        Pantau seluruh riwayat aksi, perubahan status, review duplikat, dan ekspor CSV audit trail.
+                    </p>
+                    <div class="di-card-actions">
+                        <a href="{{ route('projects.activity.index', ['project' => $project]) }}"
+                           class="btn btn-outline-primary btn-sm w-100">
+                            Buka Riwayat &amp; Log
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
 </div>
+@endif
 @endsection

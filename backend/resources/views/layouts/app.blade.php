@@ -33,7 +33,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ asset('css/dupissue-polish.css') }}?v=20261112">
+    <link rel="stylesheet" href="{{ asset('css/dupissue-polish.css') }}?v=20261119-ui-refinement">
 </head>
 <body class="di-app bg-light min-vh-100 d-flex flex-column">
     <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom shadow-sm">
@@ -46,19 +46,25 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
+                <ul class="navbar-nav me-auto di-main-nav">
                     <li class="nav-item">
-                        <a class="nav-link" href="/projects">Daftar Project</a>
+                        <a class="nav-link di-nav-link {{ request()->routeIs('projects.*', 'issues.*', 'sources.*', 'reporter.projects.index', 'maintainer.dashboard') ? 'is-active' : '' }}" href="{{ route('projects.index') }}"
+                           @if (request()->routeIs('projects.*', 'issues.*', 'sources.*', 'reporter.projects.index', 'maintainer.dashboard')) aria-current="page" @endif>Daftar Project</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/invitations">Undangan</a>
+                        <a class="nav-link di-nav-link {{ request()->routeIs('invitations.*') ? 'is-active' : '' }}" href="{{ route('invitations.index') }}"
+                           @if (request()->routeIs('invitations.*')) aria-current="page" @endif>Undangan</a>
                     </li>
                 </ul>
                 <div class="d-flex align-items-center gap-3">
                     @auth
-                        <span class="badge bg-secondary">
-                            {{ auth()->user()->role ?? 'User' }}: {{ auth()->user()->name ?? auth()->user()->email }}
-                        </span>
+                        <div class="di-account-summary" aria-label="Akun pengguna">
+                            <span class="di-account-avatar" aria-hidden="true">{{ mb_strtoupper(mb_substr(trim(auth()->user()->name ?: auth()->user()->email), 0, 1)) }}</span>
+                            <span class="di-account-meta">
+                                <span class="di-account-name">{{ auth()->user()->name ?: auth()->user()->email }}</span>
+                                <span class="di-account-role">{{ ucfirst(strtolower(auth()->user()->role ?? 'User')) }}</span>
+                            </span>
+                        </div>
                         @include('partials.logout-button')
                     @endauth
                 </div>

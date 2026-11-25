@@ -9,7 +9,7 @@
             <div class="card-body p-4">
                 <div class="d-flex align-items-center mb-3">
                     <a href="/projects" class="btn btn-outline-secondary btn-sm me-3">
-                        <i class="bi bi-arrow-left"></i>
+                        Kembali
                     </a>
                     <h3 class="h4 fw-bold mb-0">Buat Project</h3>
                 </div>

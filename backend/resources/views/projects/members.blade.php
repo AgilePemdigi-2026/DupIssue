@@ -7,7 +7,7 @@
     <div>
         <div class="d-flex align-items-center gap-2">
             <a href="/projects/{{ $project->id }}" class="btn btn-outline-secondary btn-sm">
-                <i class="bi bi-arrow-left"></i>
+                Kembali
             </a>
             <h3 class="h4 fw-bold mb-0">Anggota Project: {{ $project->name }}</h3>
         </div>

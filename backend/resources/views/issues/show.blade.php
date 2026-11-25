@@ -14,7 +14,7 @@
         <section id="issue-status-detail"
                  data-read-url="{{ route('issues.status.read', ['project' => $project, 'issue' => $issue]) }}"
                  data-parent-relation="{{ $issue->duplicate_of === null ? 'none' : ($parentIssue ? 'valid:'.$parentIssue->id : 'invalid') }}">
-            <p><strong>Status:</strong> <span id="issue-status-value">{{ $issue->status }}</span></p>
+            <p><strong>Status:</strong> <span id="issue-status-value" class="badge di-issue-status" data-status="{{ $issue->status }}">{{ $issue->status }}</span></p>
             <p><strong>Status deteksi NLP:</strong> <span id="issue-detection-status-value">{{ $issue->detection_status }}</span></p>
             <p><strong>Asal data:</strong> {{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</p>
             <p><strong>Jumlah vote:</strong> <span id="issue-vote-count-value">{{ (int) $issue->vote_count }}</span></p>
@@ -136,14 +136,14 @@
                                         <div class="col-md-6">
                                             <div class="border rounded p-3 h-100">
                                                 <strong>Issue #{{ $issue->id }} — {{ $issue->title }}</strong>
-                                                <p class="mb-1">Status: {{ $issue->status }} | Vote: {{ $issue->vote_count }} | Sumber: {{ $issue->source_type }}</p>
+                                                <p class="mb-1">Status: <span class="badge di-issue-status" data-status="{{ $issue->status }}">{{ $issue->status }}</span> | Vote: {{ $issue->vote_count }} | Sumber: {{ $issue->source_type }}</p>
                                                 <p class="mb-0" style="white-space: pre-wrap">{{ $issue->description }}</p>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="border rounded p-3 h-100">
                                                 <strong>Issue #{{ $recommendation->candidateIssue->id }} — {{ $recommendation->candidateIssue->title }}</strong>
-                                                <p class="mb-1">Status: {{ $recommendation->candidateIssue->status }} | Vote: {{ $recommendation->candidateIssue->vote_count }} | Sumber: {{ $recommendation->candidateIssue->source_type }}</p>
+                                                <p class="mb-1">Status: <span class="badge di-issue-status" data-status="{{ $recommendation->candidateIssue->status }}">{{ $recommendation->candidateIssue->status }}</span> | Vote: {{ $recommendation->candidateIssue->vote_count }} | Sumber: {{ $recommendation->candidateIssue->source_type }}</p>
                                                 <p class="mb-0" style="white-space: pre-wrap">{{ $recommendation->candidateIssue->description }}</p>
                                             </div>
                                         </div>

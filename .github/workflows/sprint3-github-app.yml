@@ -1,0 +1,166 @@
+name: Sprint 3 - GitHub App CI
+
+on:
+  push:
+    branches:
+      - feature/github-app-integration
+  pull_request:
+    branches:
+      - feature/sprint3-issue-sources
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sprint3-github-app:
+    name: Sprint 3 - PHPUnit and JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ':memory:'
+      DB_URL: ''
+      DATABASE_URL: ''
+      SESSION_DRIVER: array
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+      NLP_SERVICE_URL: http://nlp.test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, dom, xml, pdo_sqlite, sqlite3, fileinfo, curl
+          coverage: none
+          tools: composer:v2
+
+      - name: Configure Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install PHP dependencies
+        run: |
+          composer install \
+            --no-interaction \
+            --prefer-dist \
+            --no-progress \
+            --optimize-autoloader
+
+      - name: Verify isolated testing configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test ! -f bootstrap/cache/config.php
+
+          php -r '
+            $xml = simplexml_load_file("phpunit.xml");
+
+            if ($xml === false) {
+                exit(1);
+            }
+
+            $env = [];
+
+            foreach ($xml->php->env as $item) {
+                $env[(string) $item["name"]] =
+                    (string) $item["value"];
+            }
+
+            if (
+                ($env["DB_CONNECTION"] ?? null) !== "sqlite" ||
+                ($env["DB_DATABASE"] ?? null) !== ":memory:" ||
+                ($env["DB_URL"] ?? "") !== ""
+            ) {
+                fwrite(
+                    STDERR,
+                    "Unsafe PHPUnit database configuration\n"
+                );
+                exit(1);
+            }
+
+            echo "SQLite in-memory configuration verified.\n";
+          '
+
+      - name: Prepare ephemeral Laravel environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          app_key="$(
+            php -r '
+              echo "base64:" .
+                   base64_encode(random_bytes(32));
+            '
+          )"
+
+          {
+            echo 'APP_NAME=DupIssue-Sprint3-CI'
+            echo 'APP_ENV=testing'
+            echo "APP_KEY=$app_key"
+            echo 'APP_DEBUG=true'
+            echo 'APP_URL=http://localhost'
+            echo 'DB_CONNECTION=sqlite'
+            echo 'DB_DATABASE=:memory:'
+            echo 'DB_URL='
+            echo 'DATABASE_URL='
+            echo 'SESSION_DRIVER=array'
+            echo 'CACHE_STORE=array'
+            echo 'QUEUE_CONNECTION=sync'
+            echo 'MAIL_MAILER=array'
+            echo 'NLP_SERVICE_URL=http://nlp.test'
+          } > .env.testing
+
+          cp .env.testing .env
+
+          test ! -f bootstrap/cache/config.php
+
+          echo "Ephemeral testing environment ready."
+
+      - name: Full PHPUnit regression
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ./vendor/bin/phpunit \
+            --display-skipped \
+            --no-progress \
+            --colors=never
+
+      - name: PHP and JavaScript syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          php -l app/Http/Controllers/SourceIssueController.php
+          php -l tests/Feature/SourceIssueControllerTest.php
+
+          node --check public/js/github-app.js
+          node --check public/js/github-connection.js
+          node --check public/js/github-preview.js
+          node --check public/js/modal-portal.js
+
+          for file in tests/javascript/*.test.cjs; do
+            node --check "$file"
+          done
+
+      - name: All JavaScript interaction tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node --test tests/javascript/*.test.cjs
