@@ -8,6 +8,7 @@ use App\Http\Controllers\DuplicateReviewController;
 use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\DocumentationController;
 use App\Http\Controllers\ProjectMemberController;
 use App\Models\Project;
 use App\Services\ProjectService;
@@ -23,6 +24,10 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::view('/', 'landing')->name('home');
+Route::view('/tentang', 'about')->name('about');
+Route::get('/documentation/{topic?}', [DocumentationController::class, 'show'])
+    ->where('topic', '[a-z0-9-]+')
+    ->name('documentation');
 
 
 /*
