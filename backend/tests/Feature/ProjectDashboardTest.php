@@ -80,7 +80,9 @@ class ProjectDashboardTest extends TestCase
             ->assertSee('Belum ada data')
             ->assertSee(route('issues.index', ['project' => $project]))
             ->assertSee(route('projects.duplicates.index', ['project' => $project]))
-            ->assertSee('Impor CSV dan koneksi GitHub belum tersedia');
+            ->assertSee(route('sources.index', ['project' => $project]))
+            ->assertSee('Impor CSV atau Hubungkan GitHub')
+            ->assertDontSee('Impor CSV dan koneksi GitHub belum tersedia');
         $response->assertViewHas('stats', function (array $stats): bool {
             return $stats['totalIssueCount'] === 0
                 && $stats['duplicatePercentage'] === 0.0
@@ -233,7 +235,7 @@ class ProjectDashboardTest extends TestCase
         });
     }
 
-    public function test_average_triage_time_uses_first_valid_duplicate_decision_for_both_issues(): void
+    public function test_average_triage_time_uses_first_valid_review_or_status_change(): void
     {
         [$owner, $project] = $this->ownerAndProject();
         $source = $this->createIssue($project, 'Source', 'OPEN', null, now()->subMinutes(100));
@@ -282,7 +284,7 @@ class ProjectDashboardTest extends TestCase
         $response = $this->actingAs($owner)
             ->get(route('projects.dashboard', ['project' => $project]));
 
-        $response->assertViewHas('stats.averageTriageMinutes', 40.0);
+        $response->assertViewHas('stats.averageTriageMinutes', 46.7);
     }
 
     public function test_average_triage_time_is_unavailable_without_valid_activity_history(): void
@@ -296,7 +298,7 @@ class ProjectDashboardTest extends TestCase
             $issue,
             'ISSUE_STATUS_CHANGED',
             ['status' => 'OPEN'],
-            ['status' => 'IN_PROGRESS'],
+            ['status' => 'OPEN'],
             now()->subDay()
         );
         $this->addActivity(
@@ -435,10 +437,201 @@ class ProjectDashboardTest extends TestCase
         });
     }
 
+    public function test_triage_counts_only_the_earliest_event_per_issue(): void
+    {
+        [$owner, $project] = $this->ownerAndProject();
+
+        $createdAt = now()->subHours(2);
+
+        $source = $this->createIssue(
+            $project, 'Source', 'OPEN', null, $createdAt
+        );
+
+        $candidate = $this->createIssue(
+            $project, 'Candidate', 'OPEN', null, $createdAt
+        );
+
+        // Insert later activity first to verify chronological selection.
+        $this->addActivity(
+            $project,
+            $source,
+            'DUPLICATE_REVIEW',
+            ['decision' => 'PENDING'],
+            [
+                'candidate_issue_id' => $candidate->id,
+                'decision' => 'NOT_DUPLICATE',
+            ],
+            $createdAt->copy()->addMinutes(30)
+        );
+
+        $this->addActivity(
+            $project,
+            $source,
+            'ISSUE_STATUS_CHANGED',
+            ['status' => 'OPEN'],
+            ['status' => 'IN_PROGRESS'],
+            $createdAt->copy()->addMinutes(10)
+        );
+
+        $this->actingAs($owner)
+            ->get(route('projects.dashboard', ['project' => $project]))
+            ->assertOk()
+            ->assertViewHas('stats.averageTriageMinutes', 20.0);
+    }
+
+    public function test_status_only_and_auto_close_events_are_valid_triage(): void
+    {
+        [$owner, $project] = $this->ownerAndProject();
+
+        $createdAt = now()->subHours(2);
+
+        $parent = $this->createIssue(
+            $project, 'Parent', 'RESOLVED', null, $createdAt
+        );
+
+        $child = $this->createIssue(
+            $project, 'Child', 'CLOSED', $parent->id, $createdAt
+        );
+
+        $this->addActivity(
+            $project,
+            $parent,
+            'ISSUE_STATUS_CHANGED',
+            ['status' => 'IN_PROGRESS'],
+            ['status' => 'RESOLVED'],
+            $createdAt->copy()->addMinutes(20)
+        );
+
+        $this->addActivity(
+            $project,
+            $child,
+            'DUPLICATE_AUTO_CLOSED',
+            ['status' => 'DUPLICATE', 'duplicate_of' => $parent->id],
+            ['status' => 'CLOSED', 'duplicate_of' => $parent->id],
+            $createdAt->copy()->addMinutes(20)
+        );
+
+        $this->actingAs($owner)
+            ->get(route('projects.dashboard', ['project' => $project]))
+            ->assertOk()
+            ->assertViewHas('stats.averageTriageMinutes', 20.0);
+    }
+
+    public function test_pending_candidates_exclude_cross_project_pairs(): void
+    {
+        [$owner, $project] = $this->ownerAndProject();
+        [, $foreignProject] = $this->ownerAndProject();
+
+        $source = $this->createIssue($project, 'Source');
+        $local = $this->createIssue($project, 'Local');
+        $foreign = $this->createIssue($foreignProject, 'Foreign');
+
+        // Create a legitimate candidate through the existing model.
+        DuplicateCandidate::create([
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $local->id,
+            'similarity_score' => 0.9,
+        ]);
+
+        // Simulate anomalous legacy data in the isolated test database.
+        // Bypass Eloquent validation only for this regression fixture.
+        DB::table('duplicate_candidates')->insert([
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $foreign->id,
+            'similarity_score' => 0.9,
+            'decision' => 'PENDING',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($owner)
+            ->get(route('projects.dashboard', ['project' => $project]))
+            ->assertOk()
+            ->assertViewHas('stats.pendingDuplicateCount', 1);
+    }
+
+    public function test_model_rejects_cross_project_duplicate_candidates(): void
+    {
+        [, $project] = $this->ownerAndProject();
+        [, $foreignProject] = $this->ownerAndProject();
+
+        $source = $this->createIssue($project, 'Source');
+        $foreign = $this->createIssue($foreignProject, 'Foreign');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(
+            'Duplicate candidates must belong to the same project.'
+        );
+
+        DuplicateCandidate::create([
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $foreign->id,
+            'similarity_score' => 0.9,
+        ]);
+    }
+
+    public function test_source_summary_is_project_scoped_and_never_exposes_credentials(): void
+    {
+        [$owner, $project] = $this->ownerAndProject();
+        [$foreignOwner, $foreignProject] = $this->ownerAndProject();
+
+        DB::table('github_configs')->insert([
+            [
+                'project_id' => $project->id,
+                'repo_full_name' => 'local/project',
+                'pat_encrypted' => 'synthetic-local-secret',
+            ],
+            [
+                'project_id' => $foreignProject->id,
+                'repo_full_name' => 'foreign/private-project',
+                'pat_encrypted' => 'synthetic-foreign-secret',
+            ],
+        ]);
+
+        DB::table('github_app_connections')->insert([
+            'project_id' => $project->id,
+            'installation_id' => 100,
+            'repository_id' => 200,
+            'repo_full_name' => 'local/project',
+            'verified_github_user_id' => 300,
+            'verified_at' => now(),
+        ]);
+
+        foreach ([
+            [$project, $owner, 'CSV', 'COMPLETED'],
+            [$project, $owner, 'GITHUB', 'COMPLETED'],
+            [$project, $owner, 'CSV', 'FAILED'],
+            [$foreignProject, $foreignOwner, 'CSV', 'COMPLETED'],
+        ] as [$batchProject, $actor, $source, $status]) {
+            DB::table('import_batches')->insert([
+                'project_id' => $batchProject->id,
+                'actor_id' => $actor->id,
+                'source_type' => $source,
+                'status' => $status,
+                'created_at' => $status === 'FAILED'
+                    ? '2026-11-21 02:00:00'
+                    : '2026-11-20 02:00:00',
+            ]);
+        }
+
+        $response = $this->actingAs($owner)
+            ->get(route('projects.dashboard', ['project' => $project]));
+
+        $response->assertOk()
+            ->assertSee('local/project')
+            ->assertDontSee('foreign/private-project')
+            ->assertDontSee('synthetic-local-secret')
+            ->assertDontSee('synthetic-foreign-secret')
+            ->assertViewHas('stats.sources.githubPatRepository', 'local/project')
+            ->assertViewHas('stats.sources.githubAppRepository', 'local/project')
+            ->assertViewHas('stats.sources.csvLastImportedAt', '20/11/2026 09:00 WIB')
+            ->assertViewHas('stats.sources.githubLastImportedAt', '20/11/2026 09:00 WIB');
+    }
+
     public function test_dashboard_loads_5000_issues_in_under_three_seconds(): void
     {
         [$owner, $project] = $this->ownerAndProject();
-        $now = now();
+        $now = now()->subHour();
         $rows = [];
         for ($number = 1; $number <= 5000; $number++) {
             $rows[] = [
@@ -459,16 +652,168 @@ class ProjectDashboardTest extends TestCase
             DB::table('issues')->insert($chunk);
         }
 
-        $startedAt = microtime(true);
-        $response = $this->actingAs($owner)
-            ->get(route('projects.dashboard', ['project' => $project]));
-        $elapsedSeconds = microtime(true) - $startedAt;
+        // All fixtures are generated inside guarded SQLite memory.
+        $issues = DB::table('issues')
+            ->where('project_id', $project->id)
+            ->orderBy('id')
+            ->get(['id', 'status'])
+            ->groupBy('status');
 
-        $response->assertOk();
+        $open = $issues->get('OPEN')->values();
+        $inProgress = $issues->get('IN_PROGRESS')->values();
+        $resolved = $issues->get('RESOLVED')->values();
+        $closed = $issues->get('CLOSED')->values();
+        $duplicates = $issues->get('DUPLICATE')->values();
+
+        $parentId = $open->first()->id;
+
+        DB::table('issues')
+            ->where('project_id', $project->id)
+            ->where('status', 'DUPLICATE')
+            ->update(['duplicate_of' => $parentId]);
+
+        $reporter = User::factory()->create([
+            'role' => 'REPORTER',
+        ]);
+
+        Membership::factory()->active()->create([
+            'project_id' => $project->id,
+            'user_id' => $reporter->id,
+        ]);
+
+        // 1,000 actual votes from an active project member.
+        $votes = [];
+
+        foreach ($open as $issue) {
+            $votes[] = [
+                'issue_id' => $issue->id,
+                'voter_id' => $reporter->id,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        foreach (array_chunk($votes, 200) as $chunk) {
+            DB::table('votes')->insert($chunk);
+        }
+
+        DB::table('issues')
+            ->where('project_id', $project->id)
+            ->where('status', 'OPEN')
+            ->update(['vote_count' => 1]);
+
+        // 500 pending candidate pairs in the same project.
+        $candidates = [];
+
+        for ($i = 0; $i < 500; $i++) {
+            $candidates[] = [
+                'issue_id' => $open[$i]->id,
+                'candidate_issue_id' => $inProgress[$i]->id,
+                'similarity_score' => 0.85,
+                'decision' => 'PENDING',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        foreach (array_chunk($candidates, 200) as $chunk) {
+            DB::table('duplicate_candidates')->insert($chunk);
+        }
+
+        // 4,000 audit events, all occurring 20 minutes after creation.
+        $eventTime = $now->copy()->addMinutes(20);
+        $logs = [];
+
+        foreach ([
+            ['OPEN', 'IN_PROGRESS', $inProgress],
+            ['IN_PROGRESS', 'RESOLVED', $resolved],
+            ['RESOLVED', 'CLOSED', $closed],
+        ] as [$oldStatus, $newStatus, $group]) {
+            foreach ($group as $issue) {
+                $logs[] = [
+                    'project_id' => $project->id,
+                    'user_id' => $owner->id,
+                    'issue_id' => $issue->id,
+                    'action' => 'ISSUE_STATUS_CHANGED',
+                    'old_values' => json_encode([
+                        'status' => $oldStatus,
+                    ], JSON_THROW_ON_ERROR),
+                    'new_values' => json_encode([
+                        'status' => $newStatus,
+                    ], JSON_THROW_ON_ERROR),
+                    'reason' => null,
+                    'created_at' => $eventTime,
+                    'updated_at' => $eventTime,
+                ];
+            }
+        }
+
+        foreach ($duplicates as $issue) {
+            $logs[] = [
+                'project_id' => $project->id,
+                'user_id' => $owner->id,
+                'issue_id' => $issue->id,
+                'action' => 'DUPLICATE_REVIEW',
+                'old_values' => json_encode([
+                    'decision' => 'PENDING',
+                ], JSON_THROW_ON_ERROR),
+                'new_values' => json_encode([
+                    'issue_id' => $issue->id,
+                    'candidate_issue_id' => $parentId,
+                    'decision' => 'DUPLICATE',
+                ], JSON_THROW_ON_ERROR),
+                'reason' => null,
+                'created_at' => $eventTime,
+                'updated_at' => $eventTime,
+            ];
+        }
+
+        foreach (array_chunk($logs, 200) as $chunk) {
+            DB::table('activity_logs')->insert($chunk);
+        }
+
+        // Confirm fixture size before measuring dashboard response.
+        $this->assertCount(1000, $votes);
+        $this->assertCount(500, $candidates);
+        $this->assertCount(4000, $logs);
+
+        $this->actingAs($owner);
+
+        $startedAt = hrtime(true);
+
+        $response = $this->get(
+            route('projects.dashboard', ['project' => $project])
+        );
+
+        $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;
+
+        $response->assertOk()
+            ->assertViewHas('stats.totalIssueCount', 5000)
+            ->assertViewHas('stats.duplicateIssueCount', 1000)
+            ->assertViewHas('stats.duplicatePercentage', 20.0)
+            ->assertViewHas('stats.pendingDuplicateCount', 500)
+            ->assertViewHas('stats.averageTriageMinutes', 20.0);
+
+        $response->assertViewHas(
+            'stats.topVotedIssues',
+            fn ($items): bool => $items->count() === 5
+                && $items->every(
+                    fn ($issue): bool => (int) $issue->vote_count === 1
+                )
+        );
+
+        fwrite(STDOUT, sprintf(
+            "\n[F13 PERFORMANCE] SQLite | 5000 issues | 1000 votes | 500 pending candidates | 4000 activity logs | response: %.3f seconds\n",
+            $elapsedSeconds
+        ));
+
         $this->assertLessThan(
             3.0,
             $elapsedSeconds,
-            sprintf('Dashboard took %.3f seconds for 5,000 issues.', $elapsedSeconds)
+            sprintf(
+                'Dashboard took %.3f seconds with representative data.',
+                $elapsedSeconds
+            )
         );
     }
 }
