@@ -10,7 +10,16 @@ class GithubAppIssueFetchService
     public function __construct(
         private readonly GithubAppInstallationTokenService $tokenService,
         private readonly GithubApiClient $githubClient
-    ) {
+    ) {}
+
+    public function fetchIssue(GithubAppConnection $connection, int $number): array
+    {
+        if (! $connection->exists || ! $connection->verified_at) {
+            throw new RuntimeException('Unverified GitHub connection.', 409);
+        }
+        $token = $this->tokenService->createForRepository((int) $connection->installation_id, (int) $connection->repository_id);
+
+        return $this->githubClient->fetchVerifiedIssue($connection->repo_full_name, (int) $connection->repository_id, $number, $token);
     }
 
     /**

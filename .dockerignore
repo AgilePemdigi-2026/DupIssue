@@ -1,5 +1,9 @@
 .git
 .github
+browser-extension
+.local-extension
+docs
+.qa
 **/.env
 **/.env.*
 **/vendor

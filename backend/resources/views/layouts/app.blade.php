@@ -55,6 +55,17 @@
                         <a class="nav-link di-nav-link {{ request()->routeIs('invitations.*') ? 'is-active' : '' }}" href="{{ route('invitations.index') }}"
                            @if (request()->routeIs('invitations.*')) aria-current="page" @endif>Undangan</a>
                     </li>
+                    @auth
+                        @if (auth()->user()->role === 'REPORTER')
+                            <li class="nav-item">
+                                <a class="nav-link di-nav-link {{ request()->routeIs('extension.connect') ? 'is-active' : '' }}"
+                                   href="{{ route('extension.connect') }}"
+                                   @if (request()->routeIs('extension.connect')) aria-current="page" @endif>
+                                    <i class="bi bi-puzzle me-1" aria-hidden="true"></i> Extension
+                                </a>
+                            </li>
+                        @endif
+                    @endauth
                 </ul>
                 <div class="d-flex align-items-center gap-3">
                     @auth

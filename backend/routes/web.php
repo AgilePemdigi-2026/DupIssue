@@ -236,3 +236,7 @@ Route::middleware(['auth'])->group(function () {
 | Route CSV dan GitHub dipisahkan agar tidak mengganggu modul lain.
 */
 require __DIR__ . '/issue_sources.php';
+
+
+// DupIssue browser extension pairing.
+require __DIR__ . '/extension_web.php';

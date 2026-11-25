@@ -13,16 +13,38 @@ class GithubApiClient
 
     private const API_VERSION = '2026-03-10';
 
+    public function fetchVerifiedIssue(string $repository, int $repositoryId, int $number, string $token): array
+    {
+        if ($repositoryId <= 0 || $number <= 0) {
+            throw new RuntimeException('Invalid GitHub identity.', 422);
+        }
+        $path = $this->repositoryPath($repository);
+        $metadata = $this->decodeObject($this->request($path, $token));
+        if (($metadata['id'] ?? null) !== $repositoryId
+            || ! is_string($metadata['full_name'] ?? null)
+            || strcasecmp($metadata['full_name'], $repository) !== 0) {
+            throw new RuntimeException('GitHub repository identity changed. Reconnect repository.', 409);
+        }
+        $issue = $this->decodeObject($this->request($path.'/issues/'.$number, $token));
+        if (($issue['number'] ?? null) !== $number || isset($issue['pull_request'])
+            || ($issue['repository_url'] ?? null) !== self::BASE_URL.$path
+            || ! in_array($issue['state'] ?? null, ['open', 'closed'], true)) {
+            throw new RuntimeException('Invalid GitHub issue identity.', 422);
+        }
+
+        return $issue;
+    }
+
     /**
      * Verify repository access and issue-read permission.
      *
      * @return array<string, mixed>
      */
-    public function testConnection(string $repoFullName, string $pat): array
+    public function testConnection(string $repoFullName, string $token): array
     {
         $path = $this->repositoryPath($repoFullName);
 
-        $response = $this->request($path, $pat);
+        $response = $this->request($path, $token);
         $repository = $this->decodeObject($response);
 
         if (! isset($repository['full_name'])
@@ -40,8 +62,8 @@ class GithubApiClient
 
         // Repository metadata access does not prove issue-read access.
         $issuesResponse = $this->request(
-            $path . '/issues',
-            $pat,
+            $path.'/issues',
+            $token,
             [
                 'state' => 'all',
                 'per_page' => 1,
@@ -63,15 +85,15 @@ class GithubApiClient
      *
      * @return array<int, array<string, mixed>>
      */
-    public function fetchIssues(string $repoFullName, string $pat): array
+    public function fetchIssues(string $repoFullName, string $token): array
     {
-        $path = $this->repositoryPath($repoFullName) . '/issues';
+        $path = $this->repositoryPath($repoFullName).'/issues';
 
         $issues = [];
         $page = 1;
 
         do {
-            $response = $this->request($path, $pat, [
+            $response = $this->request($path, $token, [
                 'state' => 'all',
                 'per_page' => 100,
                 'page' => $page,
@@ -108,9 +130,9 @@ class GithubApiClient
             if ($hasNextPage && $page >= 5) {
                 throw new RuntimeException(
                     'GitHub repository exceeds the limit of '
-                    . '500 API items (5 pages) per operation. '
-                    . 'The issue list was not imported. '
-                    . 'Please use a smaller repository.',
+                    .'500 API items (5 pages) per operation. '
+                    .'The issue list was not imported. '
+                    .'Please use a smaller repository.',
                     422
                 );
             }
@@ -145,29 +167,29 @@ class GithubApiClient
             );
         }
 
-        return '/repos/' . $repoFullName;
+        return '/repos/'.$repoFullName;
     }
 
     /**
      * Perform an authenticated GitHub REST API request.
      *
-     * @param array<string, int|string> $query
+     * @param  array<string, int|string>  $query
      */
     private function request(
         string $path,
-        string $pat,
+        string $token,
         array $query = []
     ): Response {
-        if (trim($pat) === '') {
+        if (trim($token) === '') {
             throw new RuntimeException(
-                'GitHub Personal Access Token is required.'
+                'GitHub installation token is required.'
             );
         }
 
         try {
             $response = Http::baseUrl(self::BASE_URL)
                 ->accept('application/vnd.github+json')
-                ->withToken($pat)
+                ->withToken($token)
                 ->withHeaders([
                     'X-GitHub-Api-Version' => self::API_VERSION,
                     'User-Agent' => 'DupIssue-Laravel',
@@ -233,7 +255,7 @@ class GithubApiClient
         $status = $response->status();
 
         if ($status === 401) {
-            $message = 'GitHub PAT is invalid, expired, or revoked.';
+            $message = 'GitHub installation token is invalid, expired, or revoked.';
         } elseif (
             $status === 429
             || (

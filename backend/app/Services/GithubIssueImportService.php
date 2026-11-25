@@ -9,6 +9,7 @@ use App\Models\Issue;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -20,8 +21,7 @@ class GithubIssueImportService
 {
     public function __construct(
         private readonly GithubIssuePreviewService $preview
-    ) {
-    }
+    ) {}
 
     /**
      * Import GitHub issues only after preview confirmation.
@@ -30,7 +30,7 @@ class GithubIssueImportService
      * session and fetch GitHub issues again before calling
      * this service.
      *
-     * @param array<int, mixed> $githubIssues
+     * @param  array<int, mixed>  $githubIssues
      * @return array<string, mixed>
      */
     public function importFromApp(
@@ -99,8 +99,7 @@ class GithubIssueImportService
                     !== $expectedRepositoryId
             ) {
                 throw ValidationException::withMessages([
-                    'github' =>
-                        'Konfigurasi GitHub berubah. Ambil ulang pratinjau.',
+                    'github' => 'Konfigurasi GitHub berubah. Ambil ulang pratinjau.',
                 ]);
             }
 
@@ -125,21 +124,19 @@ class GithubIssueImportService
                 $actualFingerprint
             )) {
                 throw ValidationException::withMessages([
-                    'github' =>
-                        'Data GitHub berubah sejak pratinjau. '
-                        . 'Ambil ulang issue sebelum mengimpor.',
+                    'github' => 'Data GitHub berubah sejak pratinjau. '
+                        .'Ambil ulang issue sebelum mengimpor.',
                 ]);
             }
 
             if ($result['valid_count'] === 0) {
                 throw ValidationException::withMessages([
-                    'github' =>
-                        'Tidak ada issue GitHub baru yang valid untuk diimpor.',
+                    'github' => 'Tidak ada issue GitHub baru yang valid untuk diimpor.',
                 ]);
             }
 
             // Create one import batch for this confirmation.
-            $batch = new ImportBatch();
+            $batch = new ImportBatch;
 
             $batch->project_id = $lockedProject->id;
             $batch->actor_id = $actor->id;
@@ -162,30 +159,7 @@ class GithubIssueImportService
                     continue;
                 }
 
-                $data = $row['data'];
-
-                // Only title and description use mass assignment.
-                // All source metadata is set explicitly.
-                $issue = new Issue([
-                    'title' => $data['title'],
-                    'description' => $data['description'],
-                ]);
-
-                $issue->project()->associate($lockedProject);
-                $issue->author_id = null;
-
-                $issue->source_type = 'GITHUB';
-                $issue->source_id = null;
-                $issue->github_repo = $data['github_repo'];
-                $issue->github_number = $data['github_number'];
-                $issue->source_url = $data['source_url'];
-
-                $issue->status = 'OPEN';
-                $issue->detection_status = 'PENDING';
-                $issue->vote_count = 0;
-                $issue->duplicate_of = null;
-
-                $issue->save();
+                $issue = $this->persistIssue($lockedProject, $config, $row['data']);
 
                 $issueIds[] = (int) $issue->id;
             }
@@ -193,12 +167,11 @@ class GithubIssueImportService
             $batch->status = 'COMPLETED';
             $batch->save();
 
-            // Update both GitHub App and legacy PAT timestamps
-            // inside the import transaction. Failed imports roll back.
+            // Update the active GitHub App connection only after successful import.
             $config->last_synced_at = now();
             $config->save();
 
-            // Audit metadata only: never log the PAT or
+            // Audit metadata only: never log credentials or
             // complete GitHub issue descriptions.
             DB::table('activity_logs')->insert([
                 'project_id' => $lockedProject->id,
@@ -213,8 +186,7 @@ class GithubIssueImportService
                     'total_rows' => $result['total_rows'],
                     'imported_count' => count($issueIds),
                     'invalid_count' => $result['invalid_count'],
-                    'already_imported_count' =>
-                        $result['already_imported_count'],
+                    'already_imported_count' => $result['already_imported_count'],
                 ], JSON_THROW_ON_ERROR),
                 'reason' => null,
                 'created_at' => now(),
@@ -232,8 +204,7 @@ class GithubIssueImportService
                 'batch_id' => (int) $batch->id,
                 'imported_count' => count($issueIds),
                 'invalid_count' => $result['invalid_count'],
-                'already_imported_count' =>
-                    $result['already_imported_count'],
+                'already_imported_count' => $result['already_imported_count'],
                 'issue_ids' => $issueIds,
             ];
         }, 3);
@@ -253,12 +224,58 @@ class GithubIssueImportService
         }
     }
 
+    /** Called only after the webhook service locks and verifies its delivery and connection. */
+    public function importVerifiedWebhook(Project $project, GithubAppConnection $connection, array $remote, int $taskId): ?int
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new LogicException('Webhook persistence requires a locked transaction.');
+        }
+        $result = $this->preview->preview($project, $connection->repo_full_name, [$remote]);
+        if ($result['already_imported_count'] === 1) {
+            return null;
+        }
+        if ($result['valid_count'] !== 1) {
+            throw new \RuntimeException('Invalid GitHub issue content.', 422);
+        }
+        $issue = $this->persistIssue($project, $connection, $result['rows'][0]['data']);
+        DB::table('activity_logs')->insert([
+            'project_id' => $project->id, 'user_id' => null, 'issue_id' => $issue->id,
+            'action' => 'SYNC_GITHUB', 'old_values' => null,
+            'new_values' => json_encode(['actor' => 'github_app_webhook', 'task_id' => $taskId,
+                'repository_id' => $connection->repository_id, 'github_number' => $issue->github_number], JSON_THROW_ON_ERROR),
+            'reason' => null, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::afterCommit(fn () => $this->enqueueDetection((int) $issue->id));
+
+        return (int) $issue->id;
+    }
+
+    private function persistIssue(Project $project, GithubAppConnection $connection, array $data): Issue
+    {
+        $issue = new Issue(['title' => $data['title'], 'description' => $data['description']]);
+        $issue->project()->associate($project);
+        $issue->author_id = null;
+        $issue->source_type = 'GITHUB';
+        $issue->source_id = null;
+        $issue->github_repo = $data['github_repo'];
+        $issue->github_repository_id = $connection->repository_id;
+        $issue->github_number = $data['github_number'];
+        $issue->source_url = $data['source_url'];
+        $issue->status = 'OPEN';
+        $issue->detection_status = 'PENDING';
+        $issue->vote_count = 0;
+        $issue->duplicate_of = null;
+        $issue->save();
+
+        return $issue;
+    }
+
     private function enqueueDetection(int $issueId): void
     {
         try {
             if (! is_subclass_of(
                 DetectIssueCandidatesJob::class,
-                \Illuminate\Contracts\Queue\ShouldQueue::class
+                ShouldQueue::class
             )) {
                 throw new LogicException(
                     'NLP detection harus menggunakan queue.'
