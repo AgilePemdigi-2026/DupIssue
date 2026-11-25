@@ -147,6 +147,35 @@
         </div>
     @endif
 
+    <!-- Navigasi Dashboard Statistik: khusus Maintainer pemilik project -->
+    @if((int) $project->owner_id === (int) auth()->id() && auth()->user()?->role === 'MAINTAINER')
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="bg-primary-subtle text-primary p-2 rounded me-3">
+                            <i class="bi bi-bar-chart-line-fill fs-4"></i>
+                        </div>
+                        <div>
+                            <h5 class="fw-bold mb-0">Dashboard Statistik</h5>
+                            <small class="text-muted">Statistik dan performa project</small>
+                        </div>
+                    </div>
+                    <p class="text-muted small">
+                        Pantau distribusi status issue, statistik duplikasi,
+                        kandidat duplikat, dan performa triase project.
+                    </p>
+                    <div class="di-card-actions">
+                        <a href="{{ route('projects.dashboard', ['project' => $project]) }}"
+                           class="btn btn-outline-primary btn-sm w-100">
+                            Buka Dashboard Statistik
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
 </div>
 @endif
 @endsection
