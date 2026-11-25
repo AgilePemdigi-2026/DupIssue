@@ -106,14 +106,23 @@ class ActivityLogController extends Controller
         // Summary 2: Reduced duplicates (unique issues in current project with active duplicate_of)
         $reducedDuplicates = Issue::where('project_id', $project->id)->whereNotNull('duplicate_of')->count();
 
-        // Summary 3: Fallback last GitHub sync
-        $lastSync = ActivityLog::where('project_id', $project->id)
+        // Summary 3: Last GitHub sync from activity_logs or import_batches
+        $lastSyncTime = ActivityLog::where('project_id', $project->id)
             ->where('action', 'IMPORT_GITHUB')
             ->latest('created_at')
-            ->first();
+            ->value('created_at');
 
-        $lastSyncFormatted = $lastSync
-            ? $lastSync->created_at->setTimezone('Asia/Jakarta')->translatedFormat('d M Y H:i \W\I\B')
+        if (! $lastSyncTime) {
+            $lastSyncTime = \DB::table('import_batches')
+                ->where('project_id', $project->id)
+                ->where('source_type', 'GITHUB')
+                ->where('status', 'COMPLETED')
+                ->latest('created_at')
+                ->value('created_at');
+        }
+
+        $lastSyncFormatted = $lastSyncTime
+            ? Carbon::parse($lastSyncTime)->setTimezone('Asia/Jakarta')->translatedFormat('d M Y, H:i \W\I\B')
             : 'Belum pernah';
 
         return view('activity.index', [
@@ -217,10 +226,8 @@ class ActivityLogController extends Controller
                         : '-';
 
                     $target = '-';
-                    if ($log->issue) {
-                        $target = ((int) $log->issue->project_id === (int) $project->id)
-                            ? '#' . $log->issue->id . ' - ' . $log->issue->title
-                            : '#' . $log->issue->id . ' (Terisolasi)';
+                    if ($log->issue && (int) $log->issue->project_id === (int) $project->id) {
+                        $target = '#' . $log->issue->id . ' - ' . $log->issue->title;
                     }
 
                     $oldSanitized = $log->sanitized_old_values;
@@ -242,7 +249,7 @@ class ActivityLogController extends Controller
                         self::sanitizeCsvCell($log->action),
                         self::sanitizeCsvCell($target),
                         self::sanitizeCsvCell($detailsStr),
-                        self::sanitizeCsvCell($log->reason ?? '-'),
+                        self::sanitizeCsvCell($log->sanitized_reason ?? '-'),
                     ]);
                 }
             });
@@ -255,7 +262,7 @@ class ActivityLogController extends Controller
     }
 
     /**
-     * Neutralize formula injection triggers (=, +, -, @, Tab, CR) by prefixing with a single quote.
+     * Neutralize formula injection triggers (=, +, -, @, Tab, CR, LF) by prefixing with a single quote.
      */
     public static function sanitizeCsvCell(?string $value): string
     {
@@ -263,8 +270,14 @@ class ActivityLogController extends Controller
             return '';
         }
 
-        $trimmed = ltrim($value, " \t\v\0");
-        if ($trimmed !== '' && in_array($trimmed[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+        // Check if raw value starts with dangerous formula or control characters
+        if (in_array($value[0], ['=', '+', '-', '@', "\t", "\r", "\n"], true)) {
+            return "'" . $value;
+        }
+
+        // Check if string after leading whitespace starts with formula characters
+        $trimmed = ltrim($value, " \t\v\0\r\n");
+        if ($trimmed !== '' && in_array($trimmed[0], ['=', '+', '-', '@'], true)) {
             return "'" . $value;
         }
 

@@ -102,7 +102,7 @@ class ActivityLogViewAndExportTest extends TestCase
         $response = $this->actingAs($owner)
             ->get(route('projects.activity.index', ['project' => $project]))
             ->assertOk()
-            ->assertSee('Aktivitas Project')
+            ->assertSee('Riwayat &amp; Log Aktivitas', false)
             ->assertSee('CREATE_PROJECT')
             ->assertDontSee('Secret foreign update');
     }
@@ -529,7 +529,7 @@ class ActivityLogViewAndExportTest extends TestCase
         $issueForeignProject = Issue::forceCreate([
             'project_id' => $projectB->id,
             'author_id' => $projectB->owner_id,
-            'title' => 'Foreign Issue Beta',
+            'title' => 'Foreign Issue Beta Top Secret',
             'description' => 'Description Beta',
             'source_type' => 'FORM',
             'status' => 'OPEN',
@@ -555,26 +555,30 @@ class ActivityLogViewAndExportTest extends TestCase
             ],
         ]);
 
-        // HTML check: Same project has <a> link, foreign project does NOT have <a> link
+        // HTML check: Same project has <a> link; foreign project renders '-' without ID or title
         $viewResponse = $this->actingAs($owner)
             ->get(route('projects.activity.index', ['project' => $projectA]))
             ->assertOk();
 
         $expectedLink = route('issues.show', ['project' => $projectA, 'issue' => $issueSameProject]);
         $viewResponse->assertSee($expectedLink, false);
-        $viewResponse->assertSee("#{$issueForeignProject->id} (Terisolasi)");
+        $viewResponse->assertSee("#{$issueSameProject->id}");
+        $viewResponse->assertSee('Internal Issue Alpha');
 
-        // Foreign issue link must NOT exist
+        // Zero data leakage: foreign issue ID and title must NEVER be visible
         $forbiddenForeignLink = route('issues.show', ['project' => $projectA, 'issue' => $issueForeignProject]);
         $viewResponse->assertDontSee($forbiddenForeignLink, false);
+        $viewResponse->assertDontSee("#{$issueForeignProject->id}");
+        $viewResponse->assertDontSee('Foreign Issue Beta Top Secret');
 
-        // CSV check: foreign issue labeled (Terisolasi)
+        // CSV check: foreign issue renders '-', zero data leakage
         $csvResponse = $this->actingAs($owner)
             ->get(route('projects.activity.export', ['project' => $projectA]))
             ->assertOk();
         $csv = $csvResponse->streamedContent();
         $this->assertStringContainsString("#{$issueSameProject->id} - Internal Issue Alpha", $csv);
-        $this->assertStringContainsString("#{$issueForeignProject->id} (Terisolasi)", $csv);
+        $this->assertStringNotContainsString("#{$issueForeignProject->id}", $csv);
+        $this->assertStringNotContainsString('Foreign Issue Beta Top Secret', $csv);
     }
 
     public function test_eager_loading_prevents_n_plus_one_queries(): void
@@ -702,5 +706,109 @@ class ActivityLogViewAndExportTest extends TestCase
             ->assertOk()
             ->assertDontSee('Riwayat &amp; Log', false)
             ->assertDontSee($expectedUrl, false);
+    }
+
+    public function test_github_and_csv_import_activity_integration_and_sync_card(): void
+    {
+        $owner = User::factory()->create(['role' => 'MAINTAINER']);
+        $project = Project::factory()->create(['owner_id' => $owner->id]);
+
+        // Prior to any import: summary card shows 'Belum pernah'
+        $respInit = $this->actingAs($owner)
+            ->get(route('projects.activity.index', ['project' => $project]))
+            ->assertOk();
+        $this->assertEquals('Belum pernah', $respInit->viewData('lastSync'));
+
+        // Import CSV log
+        \DB::table('activity_logs')->insert([
+            'project_id' => $project->id,
+            'user_id' => $owner->id,
+            'action' => 'IMPORT_CSV',
+            'reason' => 'Imported 10 issues from dataset.csv',
+            'new_values' => json_encode(['imported_count' => 10, 'file_name' => 'dataset.csv']),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Import GitHub log and batch
+        $syncTime = Carbon::createFromFormat('Y-m-d H:i:s', '2026-11-25 09:15:00', 'UTC');
+        \DB::table('import_batches')->insert([
+            'project_id' => $project->id,
+            'actor_id' => $owner->id,
+            'source_type' => 'GITHUB',
+            'status' => 'COMPLETED',
+            'created_at' => $syncTime,
+        ]);
+
+        \DB::table('activity_logs')->insert([
+            'project_id' => $project->id,
+            'user_id' => $owner->id,
+            'action' => 'IMPORT_GITHUB',
+            'reason' => 'Sinkronisasi GitHub repo octocat/Hello-World',
+            'new_values' => json_encode([
+                'repo_full_name' => 'octocat/Hello-World',
+                'imported_count' => 5,
+                'installation_access_token' => 'ghs_tokenSecret123',
+                'pat_encrypted' => 'encrypted_blob_xyz',
+            ]),
+            'created_at' => $syncTime,
+            'updated_at' => $syncTime,
+        ]);
+
+        $response = $this->actingAs($owner)
+            ->get(route('projects.activity.index', ['project' => $project]))
+            ->assertOk();
+
+        // Check sync summary card shows WIB formatted time (09:15 UTC = 16:15 WIB)
+        $expectedWibSync = '25 Nov 2026, 16:15 WIB';
+        $this->assertEquals($expectedWibSync, $response->viewData('lastSync'));
+        $response->assertSee($expectedWibSync);
+
+        // Check categories and actions appear
+        $response->assertSee('IMPORT_CSV');
+        $response->assertSee('IMPORT_GITHUB');
+        $response->assertSee('ISSUE_SOURCE');
+
+        // Check sensitive tokens are completely masked
+        $response->assertDontSee('ghs_tokenSecret123');
+        $response->assertDontSee('encrypted_blob_xyz');
+        $response->assertSee('***REDACTED***');
+    }
+
+    public function test_formula_injection_defense_with_leading_whitespace_and_control_chars(): void
+    {
+        $owner = User::factory()->create(['role' => 'MAINTAINER']);
+        $project = Project::factory()->create(['owner_id' => $owner->id]);
+
+        \DB::table('activity_logs')->insert([
+            [
+                'project_id' => $project->id,
+                'user_id' => $owner->id,
+                'action' => "\t=2+5",
+                'reason' => "\n-cmd|'/C calc'!A0",
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'project_id' => $project->id,
+                'user_id' => $owner->id,
+                'action' => "\r@SUM(A1:A10)",
+                'reason' => "   +SUM(B1:B10)",
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $response = $this->actingAs($owner)
+            ->get(route('projects.activity.export', ['project' => $project]))
+            ->assertOk();
+
+        $content = $response->streamedContent();
+
+        // Formula characters preceded by whitespace or control chars must be neutralized with leading single quote
+        $this->assertStringContainsString("'\t=2+5", $content);
+        $this->assertStringContainsString("'\n-cmd|'/C calc'!A0", $content);
+        $this->assertStringContainsString("'\r@SUM(A1:A10)", $content);
+        $this->assertStringContainsString("'   +SUM(B1:B10)", $content);
     }
 }

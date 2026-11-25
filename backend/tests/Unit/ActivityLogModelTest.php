@@ -75,6 +75,12 @@ class ActivityLogModelTest extends TestCase
             'pattern' => 'regex-pattern',
             'token' => 'plain-token',
             'github_token' => 'ghp_secret123456',
+            'refresh_token' => 'rfr_secret123456',
+            'client_secret' => 'cs_secret123456',
+            'installation_access_token' => 'ghs_installation_token',
+            'pat_encrypted' => 'encrypted_blob_data',
+            'password_confirmation' => 'supersecret',
+            'bearer_token' => 'bearer_12345',
             'api_key' => 'xyz-api-key',
             'password' => 'supersecret',
             'pat' => 'bearer-pat',
@@ -85,6 +91,7 @@ class ActivityLogModelTest extends TestCase
             'nested' => [
                 'safe_field' => 'visible',
                 'token' => 'hidden-nested',
+                'client_secret' => 'nested-secret',
                 'status' => 'IN_PROGRESS',
             ],
         ];
@@ -94,6 +101,12 @@ class ActivityLogModelTest extends TestCase
         // Sensitive keys must be redacted
         $this->assertSame('***REDACTED***', $sanitized['token']);
         $this->assertSame('***REDACTED***', $sanitized['github_token']);
+        $this->assertSame('***REDACTED***', $sanitized['refresh_token']);
+        $this->assertSame('***REDACTED***', $sanitized['client_secret']);
+        $this->assertSame('***REDACTED***', $sanitized['installation_access_token']);
+        $this->assertSame('***REDACTED***', $sanitized['pat_encrypted']);
+        $this->assertSame('***REDACTED***', $sanitized['password_confirmation']);
+        $this->assertSame('***REDACTED***', $sanitized['bearer_token']);
         $this->assertSame('***REDACTED***', $sanitized['api_key']);
         $this->assertSame('***REDACTED***', $sanitized['password']);
         $this->assertSame('***REDACTED***', $sanitized['pat']);
@@ -102,6 +115,7 @@ class ActivityLogModelTest extends TestCase
         $this->assertSame('***REDACTED***', $sanitized['cookie']);
         $this->assertSame('***REDACTED***', $sanitized['private_key']);
         $this->assertSame('***REDACTED***', $sanitized['nested']['token']);
+        $this->assertSame('***REDACTED***', $sanitized['nested']['client_secret']);
 
         // Non-sensitive keys must NOT be false-positives
         $this->assertSame('Project Alpha', $sanitized['name']);
@@ -111,6 +125,23 @@ class ActivityLogModelTest extends TestCase
         $this->assertSame('regex-pattern', $sanitized['pattern']);
         $this->assertSame('visible', $sanitized['nested']['safe_field']);
         $this->assertSame('IN_PROGRESS', $sanitized['nested']['status']);
+    }
+
+    public function test_sanitize_text_redacts_tokens_in_free_form_text(): void
+    {
+        $raw = 'Sinkronisasi gagal menggunakan token ghp_1234567890abcdefghijklmnopqrstuvwxyzAB dan Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xyz';
+        $cleaned = ActivityLog::sanitizeText($raw);
+
+        $this->assertStringNotContainsString('ghp_1234567890abcdefghijklmnopqrstuvwxyzAB', $cleaned);
+        $this->assertStringNotContainsString('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xyz', $cleaned);
+        $this->assertStringContainsString('***REDACTED***', $cleaned);
+        $this->assertStringContainsString('Bearer ***REDACTED***', $cleaned);
+
+        $log = new ActivityLog([
+            'reason' => 'Menggunakan token github_pat_11AAAAAAA_testtoken1234567890 untuk impor',
+        ]);
+        $this->assertStringNotContainsString('github_pat_11AAAAAAA_testtoken1234567890', $log->sanitized_reason);
+        $this->assertStringContainsString('***REDACTED***', $log->sanitized_reason);
     }
 
     public function test_scope_of_category_filters_properly(): void

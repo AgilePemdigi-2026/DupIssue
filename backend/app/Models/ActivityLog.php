@@ -116,19 +116,42 @@ class ActivityLog extends Model
 
     public const SENSITIVE_KEYS = [
         'password',
+        'password_confirmation',
         'token',
         'access_token',
+        'refresh_token',
         'github_token',
+        'installation_access_token',
         'pat',
+        'pat_encrypted',
+        'pat_auth',
         'secret',
+        'client_secret',
         'api_key',
         'private_key',
+        'public_key',
         'cookie',
         'authorization',
+        'auth_token',
+        'bearer_token',
     ];
 
     /**
-     * Mask sensitive values inside old/new details using an explicit key whitelist.
+     * Determine whether a key is sensitive.
+     * Prevents false positives for common non-sensitive keys like 'path', 'pattern', 'status'.
+     */
+    public static function isSensitiveKey(string $key): bool
+    {
+        $lower = strtolower(trim($key));
+        if (in_array($lower, self::SENSITIVE_KEYS, true)) {
+            return true;
+        }
+
+        return (bool) preg_match('/(^|_)(password|secret|token|pat|api_key|private_key)(_|$)/i', $lower);
+    }
+
+    /**
+     * Mask sensitive values inside old/new details using key inspection.
      * Non-sensitive keys (such as 'path', 'status') will not be redacted.
      */
     public static function sanitizeValues(?array $values): ?array
@@ -139,15 +162,32 @@ class ActivityLog extends Model
 
         $sanitized = [];
         foreach ($values as $key => $value) {
-            $lowerKey = strtolower(trim((string) $key));
-            if (in_array($lowerKey, self::SENSITIVE_KEYS, true)) {
+            if (self::isSensitiveKey((string) $key)) {
                 $sanitized[$key] = '***REDACTED***';
             } elseif (is_array($value)) {
                 $sanitized[$key] = self::sanitizeValues($value);
             } else {
-                $sanitized[$key] = $value;
+                $sanitized[$key] = is_string($value) ? self::sanitizeText($value) : $value;
             }
         }
+
+        return $sanitized;
+    }
+
+    /**
+     * Redact raw security tokens embedded in free-form text.
+     */
+    public static function sanitizeText(?string $text): ?string
+    {
+        if ($text === null || $text === '') {
+            return $text;
+        }
+
+        // Redact GitHub Personal Access Tokens (classic & fine-grained) and OAuth tokens
+        $sanitized = preg_replace('/(ghp_[A-Za-z0-9]{15,}|github_pat_[A-Za-z0-9_]{15,}|gho_[A-Za-z0-9]{15,}|ghu_[A-Za-z0-9]{15,}|ghs_[A-Za-z0-9]{15,})/', '***REDACTED***', $text);
+
+        // Redact Bearer tokens
+        $sanitized = preg_replace('/(Bearer\s+)[A-Za-z0-9\-_.~+\/]{20,}/i', '$1***REDACTED***', $sanitized);
 
         return $sanitized;
     }
@@ -160,6 +200,11 @@ class ActivityLog extends Model
     public function getSanitizedNewValuesAttribute(): ?array
     {
         return self::sanitizeValues($this->new_values);
+    }
+
+    public function getSanitizedReasonAttribute(): ?string
+    {
+        return self::sanitizeText($this->reason);
     }
 
     /**
