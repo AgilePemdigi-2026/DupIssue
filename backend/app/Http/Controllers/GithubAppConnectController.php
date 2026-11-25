@@ -15,6 +15,55 @@ use App\Services\GithubAppJwtService;
 
 class GithubAppConnectController extends Controller
 {
+    /**
+     * Cancel pending GitHub App authorization for this owner and project.
+     * Never change the active repository or historical issue data.
+     */
+    public function cancelConnection(
+        Request $request,
+        Project $project
+    ): RedirectResponse {
+        $user = $request->user();
+
+        abort_unless(
+            $user
+                && $user->role === 'MAINTAINER'
+                && (int) $project->owner_id === (int) $user->id,
+            403,
+            'Hanya Maintainer pemilik project yang diizinkan.'
+        );
+
+        $keys = [
+            'source_issue.github_app_verified_repositories',
+            'source_issue.github_app_oauth',
+            'source_issue.github_app_pending_oauth',
+            'source_issue.github_app_install',
+        ];
+
+        foreach ($keys as $key) {
+            $pending = $request->session()->get($key);
+
+            if (
+                is_array($pending)
+                && ($pending['project_id'] ?? null) === (int) $project->id
+                && ($pending['actor_id'] ?? null) === (int) $user->id
+            ) {
+                $request->session()->forget($key);
+            }
+        }
+
+        return redirect()
+            ->route('sources.index', [
+                'project' => $project->id,
+            ])
+            ->with(
+                'success',
+                'Pemilihan repository GitHub dibatalkan. '
+                . 'Koneksi sebelumnya tidak berubah.'
+            )
+            ->header('Cache-Control', 'no-store');
+    }
+
     public function saveConnection(
         Request $request,
         Project $project,

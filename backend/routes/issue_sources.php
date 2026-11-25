@@ -75,6 +75,14 @@ Route::middleware(['auth', 'role:MAINTAINER'])
             ->middleware('throttle:10,1')
             ->name('sources.github.app.callback');
 
+        // Batalkan pemilihan repository tanpa mengubah koneksi aktif.
+        Route::post(
+            '/projects/{project}/sources/github/app/cancel',
+            [GithubAppConnectController::class, 'cancelConnection']
+        )
+            ->middleware('throttle:10,1')
+            ->name('sources.github.app.cancel');
+
         // Simpan repository yang telah diverifikasi melalui OAuth.
         Route::post(
             '/projects/{project}/sources/github/app/save',

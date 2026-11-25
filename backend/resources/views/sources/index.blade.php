@@ -612,6 +612,15 @@
                             </p>
 
                             <form method="POST"
+                                  id="github-app-cancel-selection"
+                                  class="d-none"
+                                  action="{{ route('sources.github.app.cancel', [
+                                      'project' => $project->id
+                                  ]) }}">
+                                @csrf
+                            </form>
+
+                            <form method="POST"
                                   action="{{ route('sources.github.app.save', [
                                       'project' => $project->id
                                   ]) }}">
@@ -675,15 +684,24 @@
                                     </div>
                                 @endif
 
-                                <button type="submit"
-                                        class="btn btn-primary">
-                                    <i class="bi bi-check-circle me-1"></i>
-                                    {{ !empty($githubAppRepoFullName)
-                                        ? 'Konfirmasi Ganti Repository'
-                                        : (!empty($githubRepoFullName)
-                                            ? 'Konfirmasi Migrasi GitHub App'
-                                            : 'Simpan Koneksi GitHub App') }}
-                                </button>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="submit"
+                                            class="btn btn-primary">
+                                        <i class="bi bi-check-circle me-1"></i>
+                                        {{ !empty($githubAppRepoFullName)
+                                            ? 'Konfirmasi Ganti Repository'
+                                            : (!empty($githubRepoFullName)
+                                                ? 'Konfirmasi Migrasi GitHub App'
+                                                : 'Simpan Koneksi GitHub App') }}
+                                    </button>
+
+                                    <button type="submit"
+                                            form="github-app-cancel-selection"
+                                            class="btn btn-outline-secondary">
+                                        <i class="bi bi-x-circle me-1"></i>
+                                        Batal
+                                    </button>
+                                </div>
                             </form>
                         </div>
                     @endif

@@ -273,6 +273,199 @@ class GithubAppRepositoryReplacementTest extends TestCase
         Http::assertNothingSent();
     }
 
+    private function cancelRouteFor(Project $project): string
+    {
+        return "/projects/{$project->id}/sources/github/app/cancel";
+    }
+
+    public function test_cancel_clears_pending_selection_without_changing_connection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        Http::fake();
+
+        $before = $old->fresh()->getRawOriginal();
+
+        $pending = $this->verified($owner, $project, $old);
+
+        $scope = [
+            'project_id' => (int) $project->id,
+            'actor_id' => (int) $owner->id,
+            'expires_at' => now()->addMinutes(10)->timestamp,
+        ];
+
+        $pending['source_issue.github_app_oauth'] = $scope;
+        $pending['source_issue.github_app_pending_oauth'] = $scope;
+        $pending['source_issue.github_app_install'] = $scope;
+
+        $csvPreview = $scope + ['marker' => 'keep-csv'];
+        $appPreview = $scope + ['marker' => 'keep-app'];
+        $legacyPreview = $scope + ['marker' => 'keep-legacy'];
+
+        $pending['source_issue.csv_preview'] = $csvPreview;
+        $pending['source_issue.github_app_preview'] = $appPreview;
+        $pending['source_issue.github_preview'] = $legacyPreview;
+
+        $page = route('sources.index', [
+            'project' => $project->id,
+        ]);
+
+        $this->actingAs($owner)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($project))
+            ->assertRedirect($page)
+            ->assertSessionMissing(
+                'source_issue.github_app_verified_repositories'
+            )
+            ->assertSessionMissing(
+                'source_issue.github_app_oauth'
+            )
+            ->assertSessionMissing(
+                'source_issue.github_app_pending_oauth'
+            )
+            ->assertSessionMissing(
+                'source_issue.github_app_install'
+            )
+            ->assertSessionHas(
+                'source_issue.csv_preview', $csvPreview
+            )
+            ->assertSessionHas(
+                'source_issue.github_app_preview', $appPreview
+            )
+            ->assertSessionHas(
+                'source_issue.github_preview', $legacyPreview
+            );
+
+        $this->assertSame(
+            $before,
+            $old->fresh()->getRawOriginal()
+        );
+
+        $this->get($page)
+            ->assertOk()
+            ->assertDontSee('id="github-app-repository"', false);
+
+        // A previously rendered confirmation must no longer work.
+        $this->post($this->routeFor($project), [
+            'repository_id' => 333,
+            'confirm_replace' => '1',
+        ])->assertForbidden();
+
+        $this->assertSame(
+            $before,
+            $old->fresh()->getRawOriginal()
+        );
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_does_not_clear_another_projects_selection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $otherProject = Project::factory()->create([
+            'owner_id' => $owner->id,
+        ]);
+
+        Http::fake();
+
+        $pending = $this->verified($owner, $project, $old);
+
+        $key = 'source_issue.github_app_verified_repositories';
+
+        $this->actingAs($owner)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($otherProject))
+            ->assertRedirect(route('sources.index', [
+                'project' => $otherProject->id,
+            ]))
+            ->assertSessionHas($key, $pending[$key]);
+
+        $this->assertSame(
+            222,
+            (int) $old->fresh()->repository_id
+        );
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_does_not_clear_another_actors_selection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $anotherActor = User::factory()->create([
+            'role' => 'MAINTAINER',
+        ]);
+
+        Http::fake();
+
+        $pending = $this->verified(
+            $anotherActor, $project, $old
+        );
+
+        $key = 'source_issue.github_app_verified_repositories';
+
+        $this->actingAs($owner)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($project))
+            ->assertRedirect(route('sources.index', [
+                'project' => $project->id,
+            ]))
+            ->assertSessionHas($key, $pending[$key]);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_rejects_non_owner_maintainer(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $other = User::factory()->create([
+            'role' => 'MAINTAINER',
+        ]);
+
+        Http::fake();
+
+        $pending = $this->verified($owner, $project, $old);
+
+        $key = 'source_issue.github_app_verified_repositories';
+
+        $this->actingAs($other)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($project))
+            ->assertForbidden()
+            ->assertSessionHas($key, $pending[$key]);
+
+        $this->assertSame(
+            222,
+            (int) $old->fresh()->repository_id
+        );
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_button_targets_an_independent_form(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        Http::fake();
+
+        $this->actingAs($owner)
+            ->withSession($this->verified($owner, $project, $old))
+            ->get(route('sources.index', [
+                'project' => $project->id,
+            ]))
+            ->assertOk()
+            ->assertSee('Konfirmasi Ganti Repository')
+            ->assertSee('id="github-app-cancel-selection"', false)
+            ->assertSee('form="github-app-cancel-selection"', false)
+            ->assertSee($this->cancelRouteFor($project), false);
+
+        Http::assertNothingSent();
+    }
+
     public function test_replacement_requires_explicit_consent(): void
     {
         [$owner, $project, $old] = $this->setupConnection();
