@@ -1,0 +1,9 @@
+{
+  "GITHUB_APP_ID": "",
+  "GITHUB_APP_CLIENT_ID": "",
+  "GITHUB_APP_CLIENT_SECRET": "",
+  "GITHUB_APP_SLUG": "dupissue-kel4-dev-valentinokevin",
+  "GITHUB_APP_CALLBACK_URL": "http://127.0.0.1:18080/integrations/github/callback",
+  "GITHUB_APP_PRIVATE_KEY_PATH": "",
+  "GITHUB_APP_WEBHOOK_SECRET": ""
+}
