@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import torch
 
 import main
 
@@ -21,9 +22,10 @@ class FakeModel:
     def __init__(self):
         self.encoded_texts: list[str] = []
 
-    def encode(self, texts: list[str], **kwargs: object) -> list[str]:
+    def encode(self, texts: list[str], **kwargs: object):
         self.encoded_texts = texts
-        return [text.split("\n", maxsplit=1)[0] for text in texts]
+        values = {"Title: candidate lower": 1., "Title: candidate higher": 2.}
+        return torch.tensor([[values.get(text.split("\n", maxsplit=1)[0], 0.)] for text in texts])
 
 
 class CandidatesEndpointTests(unittest.TestCase):
@@ -46,12 +48,12 @@ class CandidatesEndpointTests(unittest.TestCase):
         self.model_patcher.stop()
 
     @staticmethod
-    def fake_cosine(query: str, candidates: list[str]) -> SimilarityRow:
+    def fake_cosine(query, candidates) -> SimilarityRow:
         score_by_title = {
-            "Title: candidate lower": 0.42,
-            "Title: candidate higher": 0.88,
+            1.: 0.42,
+            2.: 0.88,
         }
-        return SimilarityRow([score_by_title[candidate] for candidate in candidates])
+        return SimilarityRow([score_by_title[float(candidate[0])] for candidate in candidates])
 
     def test_health_endpoint_is_preserved(self):
         response = self.client.get("/health")
