@@ -35,6 +35,15 @@ return [
         ],
     ],
 
+    'github_app' => [
+        'app_id' => env('GITHUB_APP_ID'),
+        'client_id' => env('GITHUB_APP_CLIENT_ID'),
+        'client_secret' => env('GITHUB_APP_CLIENT_SECRET'),
+        'slug' => env('GITHUB_APP_SLUG'),
+        'callback_url' => env('GITHUB_APP_CALLBACK_URL'),
+        'private_key_path' => env('GITHUB_APP_PRIVATE_KEY_PATH'),
+    ],
+
     'nlp' => [
         'base_url' => env('NLP_SERVICE_URL'),
         'timeout' => 10,

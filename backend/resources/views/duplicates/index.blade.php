@@ -65,7 +65,7 @@
                                         </a>
                                     </td>
                                     <td>{{ $failedIssue->author?->name ?? 'User #' . $failedIssue->author_id }}</td>
-                                    <td><span class="badge bg-secondary">{{ $failedIssue->status }}</span></td>
+                                    <td><span class="badge di-issue-status" data-status="{{ $failedIssue->status }}">{{ $failedIssue->status }}</span></td>
                                     <td><span class="badge bg-danger">{{ $failedIssue->detection_status }}</span></td>
                                     <td class="text-end">
                                         <form action="{{ route('issues.detection.retry', ['project' => $project, 'issue' => $failedIssue]) }}" method="POST" class="d-inline">
@@ -116,14 +116,14 @@
                                             <span class="d-block small text-muted">Issue #{{ $cand->issue->id }}</span>
                                             <span class="d-block">{{ $cand->issue->title }}</span>
                                         </a>
-                                        <div class="di-issue-meta"><span>Status: {{ $cand->issue->status }}</span><span>Vote: {{ $cand->issue->vote_count }}</span></div>
+                                        <div class="di-issue-meta"><span>Status: <span class="badge di-issue-status" data-status="{{ $cand->issue->status }}">{{ $cand->issue->status }}</span></span><span>Vote: {{ $cand->issue->vote_count }}</span></div>
                                     </td>
                                     <td>
                                         <a href="{{ route('issues.show', ['project' => $project, 'issue' => $cand->candidateIssue]) }}" class="di-issue-link">
                                             <span class="d-block small text-muted">Issue #{{ $cand->candidateIssue->id }}</span>
                                             <span class="d-block">{{ $cand->candidateIssue->title }}</span>
                                         </a>
-                                        <div class="di-issue-meta"><span>Status: {{ $cand->candidateIssue->status }}</span><span>Vote: {{ $cand->candidateIssue->vote_count }}</span></div>
+                                        <div class="di-issue-meta"><span>Status: <span class="badge di-issue-status" data-status="{{ $cand->candidateIssue->status }}">{{ $cand->candidateIssue->status }}</span></span><span>Vote: {{ $cand->candidateIssue->vote_count }}</span></div>
                                     </td>
                                     <td>
                                         <span class="badge text-bg-primary">

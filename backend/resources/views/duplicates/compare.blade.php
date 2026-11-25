@@ -50,7 +50,7 @@
                 <div class="card-body">
                     <h2 class="h5 card-title text-break">{{ $source->title }}</h2>
                     <div class="mb-3 d-flex flex-wrap gap-2">
-                        <span class="badge bg-secondary">Status: {{ $source->status }}</span>
+                        <span>Status: <span class="badge di-issue-status" data-status="{{ $source->status }}">{{ $source->status }}</span></span>
                         <span class="badge bg-info text-dark">Vote: {{ $source->vote_count }}</span>
                         <span class="badge bg-light text-dark border">Sumber: {{ $source->source_type }}</span>
                     </div>
@@ -77,7 +77,7 @@
                 <div class="card-body">
                     <h2 class="h5 card-title text-break">{{ $suggested->title }}</h2>
                     <div class="mb-3 d-flex flex-wrap gap-2">
-                        <span class="badge bg-secondary">Status: {{ $suggested->status }}</span>
+                        <span>Status: <span class="badge di-issue-status" data-status="{{ $suggested->status }}">{{ $suggested->status }}</span></span>
                         <span class="badge bg-info text-dark">Vote: {{ $suggested->vote_count }}</span>
                         <span class="badge bg-light text-dark border">Sumber: {{ $suggested->source_type }}</span>
                     </div>

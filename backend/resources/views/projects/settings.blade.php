@@ -7,7 +7,7 @@
     <div class="col-md-9 col-lg-8">
         <div class="d-flex align-items-center mb-4">
             <a href="/projects/{{ $project->id }}" class="btn btn-outline-secondary btn-sm me-3">
-                <i class="bi bi-arrow-left"></i>
+                Kembali
             </a>
             <div>
                 <h3 class="h4 fw-bold mb-0">Pengaturan Project</h3>
