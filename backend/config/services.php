@@ -36,6 +36,7 @@ return [
     ],
 
     'github_app' => [
+        'webhook_secret' => env('GITHUB_APP_WEBHOOK_SECRET'),
         'app_id' => env('GITHUB_APP_ID'),
         'client_id' => env('GITHUB_APP_CLIENT_ID'),
         'client_secret' => env('GITHUB_APP_CLIENT_SECRET'),

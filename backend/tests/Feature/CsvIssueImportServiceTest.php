@@ -162,6 +162,467 @@ class CsvIssueImportServiceTest extends TestCase
         }
     }
 
+    public function test_imported_csv_issue_persists_only_top_three_candidates(): void
+    {
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+        $otherProject = $this->makeProject($owner);
+
+        // Existing comparison issues in the authorized project.
+        $candidateA = $this->existingCsvIssue(
+            $project, 'EXISTING-A'
+        );
+
+        $candidateB = $this->existingCsvIssue(
+            $project, 'EXISTING-B'
+        );
+
+        $candidateC = $this->existingCsvIssue(
+            $project, 'EXISTING-C'
+        );
+
+        $candidateD = $this->existingCsvIssue(
+            $project, 'EXISTING-D'
+        );
+
+        // A foreign-project issue must never become a candidate.
+        $foreign = $this->existingCsvIssue(
+            $otherProject, 'FOREIGN-A'
+        );
+
+        config([
+            'services.nlp.base_url' => 'http://nlp.test',
+        ]);
+
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+
+        // Import two valid issues in the same batch.
+        $parsed = $this->parse(
+            "source_id,title,description\n".
+            "CSV-NEW-001,Login gagal,Pengguna gagal masuk ke aplikasi\n".
+            "CSV-NEW-002,Login bermasalah,Pengguna tidak dapat masuk ke aplikasi\n".
+            "EXISTING-A,Issue lama,Issue ini sudah pernah diimpor\n".
+            "CSV-INVALID,No,pendek\n"
+        );
+
+        $result = $this->importer()->import(
+            $project,
+            $owner,
+            $parsed,
+            'top-three-regression.csv'
+        );
+
+        $this->assertSame(2, $result['imported_count']);
+        $this->assertSame(1, $result['invalid_count']);
+        $this->assertSame(1, $result['already_imported_count']);
+        $this->assertCount(2, $result['issue_ids']);
+
+        $source = Issue::query()
+            ->whereKey($result['issue_ids'][0])
+            ->firstOrFail();
+
+        $batchPeer = Issue::query()
+            ->whereKey($result['issue_ids'][1])
+            ->firstOrFail();
+
+        $this->assertSame('CSV', $source->source_type);
+        $this->assertSame('PENDING', $source->detection_status);
+        $this->assertSame('PENDING', $batchPeer->detection_status);
+
+        // Import itself must not run inference synchronously.
+        $this->assertDatabaseCount('duplicate_candidates', 0);
+
+        Bus::assertDispatched(
+            DetectIssueCandidatesJob::class,
+            2
+        );
+
+        foreach ($result['issue_ids'] as $id) {
+            Bus::assertDispatched(
+                DetectIssueCandidatesJob::class,
+                fn ($job) =>
+                    $job->issueId === $id
+                    && $job->connection === 'database'
+                    && $job->queue === 'nlp'
+            );
+        }
+
+        // Deliberately return unsorted results, including
+        // malicious self and cross-project candidates.
+        \Illuminate\Support\Facades\Http::fake([
+            '*/candidates' =>
+                \Illuminate\Support\Facades\Http::response([
+                    'candidates' => [
+                        [
+                            'issue_id' => $candidateC->id,
+                            'similarity' => 0.82,
+                        ],
+                        [
+                            'issue_id' => $foreign->id,
+                            'similarity' => 0.99,
+                        ],
+                        [
+                            'issue_id' => $candidateB->id,
+                            'similarity' => 0.87,
+                        ],
+                        [
+                            'issue_id' => $source->id,
+                            'similarity' => 1.0,
+                        ],
+                        [
+                            'issue_id' => $candidateD->id,
+                            'similarity' => 0.70,
+                        ],
+                        [
+                            'issue_id' => $batchPeer->id,
+                            'similarity' => 0.96,
+                        ],
+                        [
+                            'issue_id' => $candidateA->id,
+                            'similarity' => 0.91,
+                        ],
+                    ],
+                ], 200),
+        ]);
+
+        // Execute the real worker logic against fake NLP HTTP.
+        $job = new DetectIssueCandidatesJob($source->id);
+
+        $job->handle(
+            app(\App\Services\NlpClient::class)
+        );
+
+        \Illuminate\Support\Facades\Http::assertSentCount(1);
+
+        // The comparison payload includes issues from the same
+        // imported batch, but excludes self and foreign projects.
+        \Illuminate\Support\Facades\Http::assertSent(
+            function ($request) use (
+                $source,
+                $batchPeer,
+                $foreign,
+                $project,
+                $candidateA,
+                $candidateB,
+                $candidateC,
+                $candidateD
+            ): bool {
+                $payload = $request->data();
+
+                $ids = collect($payload['candidates'])
+                    ->pluck('issue_id');
+
+                return (int) $payload['project_id'] === (int) $project->id
+                    && (int) $payload['new_issue']['issue_id'] === (int) $source->id
+                    && $ids->contains($batchPeer->id)
+                    && $ids->contains($candidateA->id)
+                    && $ids->contains($candidateB->id)
+                    && $ids->contains($candidateC->id)
+                    && $ids->contains($candidateD->id)
+                    && ! $ids->contains($source->id)
+                    && ! $ids->contains($foreign->id)
+                    && collect($payload['candidates'])->every(
+                        fn (array $candidate): bool =>
+                            (int) $candidate['project_id'] === (int) $project->id
+                    );
+            }
+        );
+
+        $source->refresh();
+
+        $this->assertSame('COMPLETED', $source->detection_status);
+        $this->assertSame('OPEN', $source->status);
+        $this->assertNull($source->duplicate_of);
+
+        $saved = \App\Models\DuplicateCandidate::query()
+            ->where('issue_id', $source->id)
+            ->orderByDesc('similarity_score')
+            ->get();
+
+        // These exclusions already belong to the existing pipeline.
+        $this->assertFalse(
+            $saved->contains('candidate_issue_id', $source->id)
+        );
+
+        $this->assertFalse(
+            $saved->contains('candidate_issue_id', $foreign->id)
+        );
+
+        $this->assertFalse(
+            $saved->contains('candidate_issue_id', $candidateD->id)
+        );
+
+        // Regression target: the current implementation stores
+        // four qualifying candidates instead of the required three.
+        $this->assertCount(3, $saved);
+
+        $this->assertSame(
+            [
+                (int) $batchPeer->id,
+                (int) $candidateA->id,
+                (int) $candidateB->id,
+            ],
+            $saved->pluck('candidate_issue_id')->all()
+        );
+
+        $this->assertSame(
+            [0.96, 0.91, 0.87],
+            $saved->pluck('similarity_score')->all()
+        );
+
+        $this->assertDatabaseMissing('duplicate_candidates', [
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $candidateC->id,
+        ]);
+
+        $this->assertDatabaseHas('import_batches', [
+            'id' => $result['batch_id'],
+            'status' => 'COMPLETED',
+        ]);
+
+        $this->assertDatabaseCount('issues', 7);
+    }
+
+    public static function candidateLimitCases(): array
+    {
+        return [
+            'CSV maximum three' => ['CSV', 12, 3],
+            'FORM retains ten' => ['FORM', 12, 10],
+            'GITHUB retains ten' => ['GITHUB', 12, 10],
+            'CSV no qualifying candidates' => ['CSV', 0, 0],
+            'CSV one qualifying candidate' => ['CSV', 1, 1],
+            'CSV two qualifying candidates' => ['CSV', 2, 2],
+            'CSV exactly three candidates' => ['CSV', 3, 3],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('candidateLimitCases')]
+    public function test_candidate_limit_respects_source_type(
+        string $sourceType,
+        int $qualifyingCount,
+        int $expectedCount
+    ): void {
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+
+        $source = $this->existingCsvIssue(
+            $project, 'SOURCE-ISSUE'
+        );
+
+        // Construct the actual source metadata for each source type.
+        $source->source_type = $sourceType;
+
+        if ($sourceType !== 'CSV') {
+            $source->source_id = null;
+        }
+
+        if ($sourceType === 'FORM') {
+            $source->author_id = $owner->id;
+        }
+
+        if ($sourceType === 'GITHUB') {
+            $source->github_repo = 'example/test-repo';
+            $source->github_number = 1;
+            $source->source_url =
+                'https://github.com/example/test-repo/issues/1';
+        }
+
+        $source->save();
+
+        $candidates = [];
+        $expectedIds = [];
+
+        for ($i = 0; $i < $qualifyingCount; $i++) {
+            $candidate = $this->existingCsvIssue(
+                $project, "CANDIDATE-{$i}"
+            );
+
+            $candidates[] = [
+                'issue_id' => $candidate->id,
+                'similarity' => round(0.99 - ($i / 100), 2),
+            ];
+
+            $expectedIds[] = (int) $candidate->id;
+        }
+
+        // A candidate below 0.75 must always be excluded.
+        $belowThreshold = $this->existingCsvIssue(
+            $project, 'BELOW-THRESHOLD'
+        );
+
+        $candidates[] = [
+            'issue_id' => $belowThreshold->id,
+            'similarity' => 0.74,
+        ];
+
+        // Return candidates in reverse rank order.
+        $candidates = array_reverse($candidates);
+
+        config([
+            'services.nlp.base_url' => 'http://nlp.test',
+        ]);
+
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+
+        \Illuminate\Support\Facades\Http::fake([
+            '*/candidates' =>
+                \Illuminate\Support\Facades\Http::response([
+                    'candidates' => $candidates,
+                ], 200),
+        ]);
+
+        (new DetectIssueCandidatesJob($source->id))->handle(
+            app(\App\Services\NlpClient::class)
+        );
+
+        \Illuminate\Support\Facades\Http::assertSentCount(1);
+
+        $source->refresh();
+
+        $this->assertSame(
+            $sourceType,
+            $source->source_type
+        );
+
+        $this->assertSame(
+            'COMPLETED',
+            $source->detection_status
+        );
+
+        $this->assertSame('OPEN', $source->status);
+        $this->assertNull($source->duplicate_of);
+
+        $saved = \App\Models\DuplicateCandidate::query()
+            ->where('issue_id', $source->id)
+            ->orderByDesc('similarity_score')
+            ->get();
+
+        $this->assertCount($expectedCount, $saved);
+
+        $this->assertSame(
+            array_slice($expectedIds, 0, $expectedCount),
+            $saved->pluck('candidate_issue_id')->all()
+        );
+
+        $this->assertDatabaseMissing('duplicate_candidates', [
+            'issue_id' => $source->id,
+            'candidate_issue_id' => $belowThreshold->id,
+        ]);
+
+        foreach ($saved as $candidate) {
+            $this->assertSame('PENDING', $candidate->decision);
+            $this->assertGreaterThanOrEqual(
+                0.75,
+                $candidate->similarity_score
+            );
+        }
+    }
+
+    public function test_csv_equal_scores_have_stable_ranking_and_idempotent_delivery(): void
+    {
+        $owner = $this->makeUser('MAINTAINER');
+        $project = $this->makeProject($owner);
+
+        $source = $this->existingCsvIssue(
+            $project, 'TIE-SOURCE'
+        );
+
+        $ids = [];
+
+        for ($i = 0; $i < 5; $i++) {
+            $candidate = $this->existingCsvIssue(
+                $project, "TIE-CANDIDATE-{$i}"
+            );
+
+            $ids[] = (int) $candidate->id;
+        }
+
+        sort($ids);
+
+        // Five equal scores returned in descending ID order.
+        $response = array_map(
+            fn (int $id): array => [
+                'issue_id' => $id,
+                'similarity' => 0.90,
+            ],
+            array_reverse($ids)
+        );
+
+        config([
+            'services.nlp.base_url' => 'http://nlp.test',
+        ]);
+
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+
+        \Illuminate\Support\Facades\Http::fake([
+            '*/candidates' =>
+                \Illuminate\Support\Facades\Http::response([
+                    'candidates' => $response,
+                ], 200),
+        ]);
+
+        $job = new DetectIssueCandidatesJob($source->id);
+
+        $job->handle(
+            app(\App\Services\NlpClient::class)
+        );
+
+        $query = fn () =>
+            \App\Models\DuplicateCandidate::query()
+                ->where('issue_id', $source->id)
+                ->orderBy('candidate_issue_id')
+                ->get();
+
+        $before = $query();
+
+        $this->assertCount(3, $before);
+
+        $this->assertSame(
+            array_slice($ids, 0, 3),
+            $before->pluck('candidate_issue_id')->all()
+        );
+
+        $this->assertSame(
+            [0.90, 0.90, 0.90],
+            $before->pluck('similarity_score')->all()
+        );
+
+        $originalRows = $before->map(
+            fn ($candidate) => $candidate->getRawOriginal()
+        )->all();
+
+        // Simulate a repeated delivery after successful completion.
+        (new DetectIssueCandidatesJob($source->id))->handle(
+            app(\App\Services\NlpClient::class)
+        );
+
+        // Simulate a late failure notification from another delivery.
+        $job->failed(
+            new \RuntimeException('Simulated late queue failure')
+        );
+
+        $after = $query();
+
+        $this->assertCount(3, $after);
+
+        $this->assertSame(
+            $originalRows,
+            $after->map(
+                fn ($candidate) => $candidate->getRawOriginal()
+            )->all()
+        );
+
+        $this->assertSame(
+            'COMPLETED',
+            $source->refresh()->detection_status
+        );
+
+        $this->assertSame('OPEN', $source->status);
+        $this->assertNull($source->duplicate_of);
+
+        \Illuminate\Support\Facades\Http::assertSentCount(1);
+    }
+
     public function test_reimport_does_not_create_duplicate_issue(): void
     {
         $owner = $this->makeUser('MAINTAINER');

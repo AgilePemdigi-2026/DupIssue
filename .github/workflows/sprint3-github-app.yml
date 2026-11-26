@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - feature/github-app-integration
+      - fix/github-app-repository-management
   pull_request:
     branches:
       - feature/sprint3-issue-sources
+      - main
   workflow_dispatch:
 
 permissions:
@@ -150,8 +152,6 @@ jobs:
           php -l tests/Feature/SourceIssueControllerTest.php
 
           node --check public/js/github-app.js
-          node --check public/js/github-connection.js
-          node --check public/js/github-preview.js
           node --check public/js/modal-portal.js
 
           for file in tests/javascript/*.test.cjs; do
@@ -164,3 +164,11 @@ jobs:
           set -euo pipefail
 
           node --test tests/javascript/*.test.cjs
+
+      - name: Extension contracts, lifecycle and DOM simulations
+        run: node --test ../browser-extension/tests/*.test.mjs
+
+      - name: Extension syntax and manifest validation
+        run: |
+          node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("../browser-extension/manifest.json")); if(m.manifest_version!==3)process.exit(1)'
+          find ../browser-extension -type f \( -name '*.js' -o -name '*.mjs' \) -exec node --check {} \;

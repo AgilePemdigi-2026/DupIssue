@@ -102,6 +102,10 @@ class GithubAppIssueImportServiceTest extends TestCase
 
     private function assertRejected(callable $operation): void
     {
+        $previousSync = now()->subDay()->startOfSecond();
+        $this->connection->last_synced_at = $previousSync;
+        $this->connection->save();
+
         try {
             $operation();
             $this->fail('Import should have been rejected.');
@@ -115,6 +119,11 @@ class GithubAppIssueImportServiceTest extends TestCase
         $this->assertDatabaseCount('issues', 0);
         $this->assertDatabaseCount('import_batches', 0);
 
+        $this->assertSame(
+            $previousSync->toDateTimeString(),
+            $this->connection->fresh()->last_synced_at->toDateTimeString()
+        );
+
         Bus::assertNotDispatched(
             DetectIssueCandidatesJob::class
         );
@@ -125,7 +134,18 @@ class GithubAppIssueImportServiceTest extends TestCase
         // Membuktikan GitHub App tidak memerlukan konfigurasi PAT.
         $this->assertDatabaseCount('github_configs', 0);
 
+        $this->freezeTime();
+
+        $this->assertNull(
+            $this->connection->fresh()->last_synced_at
+        );
+
         $result = $this->import();
+
+        $this->assertSame(
+            now()->toDateTimeString(),
+            $this->connection->fresh()->last_synced_at->toDateTimeString()
+        );
 
         $this->assertSame(1, $result['imported_count']);
         $this->assertSame(0, $result['invalid_count']);

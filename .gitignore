@@ -21,6 +21,8 @@
 .idea/
 
 # OS generated files
+.local-extension/
+.qa/
 .DS_Store
 Thumbs.db
 

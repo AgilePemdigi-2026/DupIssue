@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\DetectIssueCandidatesJob;
+use App\Models\GithubAppConnection;
 use App\Models\GithubConfig;
 use App\Models\Issue;
 use App\Models\Project;
@@ -43,10 +44,13 @@ class GithubIssueImportServiceTest extends TestCase
         $config = null;
 
         if ($withConfig) {
-            $config = new GithubConfig();
+            $config = new GithubAppConnection();
             $config->project_id = $project->id;
+            $config->installation_id = 111;
+            $config->repository_id = 222;
             $config->repo_full_name = 'demo/bugs';
-            $config->pat_encrypted = 'secret-import-token';
+            $config->verified_github_user_id = 999;
+            $config->verified_at = now();
             $config->save();
         }
 
@@ -90,10 +94,12 @@ class GithubIssueImportServiceTest extends TestCase
     ): array {
         return app(
             GithubIssueImportService::class
-        )->import(
+        )->importFromApp(
             $project,
             $actor,
             $configId,
+            111,
+            222,
             $repo,
             $issues,
             $fingerprint
@@ -122,6 +128,16 @@ class GithubIssueImportServiceTest extends TestCase
     public function test_successful_import_creates_batch_audit_and_nlp_jobs(): void
     {
         [$owner, $project, $config] = $this->makeProject();
+
+        $legacy = new GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'demo/bugs';
+        $legacy->pat_encrypted = 'secret-import-token';
+        $legacy->last_synced_at = now()->subDay();
+        $legacy->save();
+
+        $legacyTimestamp = $legacy->last_synced_at->toDateTimeString();
+        $legacyCredential = $legacy->getRawOriginal('pat_encrypted');
 
         $this->existingIssue($project, 102);
 
@@ -226,6 +242,16 @@ class GithubIssueImportServiceTest extends TestCase
 
         $this->assertNotNull($config->last_synced_at);
 
+        $this->assertSame(
+            $legacyTimestamp,
+            $legacy->fresh()->last_synced_at->toDateTimeString()
+        );
+
+        $this->assertTrue(hash_equals(
+            $legacyCredential,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
         // DatabaseMigrations allows afterCommit to execute.
         Bus::assertDispatched(
             DetectIssueCandidatesJob::class,
@@ -294,6 +320,62 @@ class GithubIssueImportServiceTest extends TestCase
 
         $this->assertDatabaseCount('issues', 0);
         $this->assertDatabaseCount('import_batches', 0);
+    }
+
+    public function test_pat_only_project_cannot_import_without_app_connection(): void
+    {
+        [$owner, $project] = $this->makeProject(false);
+
+        $legacy = new GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'demo/bugs';
+        $legacy->pat_encrypted = 'fake-retired-token';
+        $legacy->last_synced_at = now()->subDay();
+        $legacy->save();
+
+        $encrypted = $legacy->getRawOriginal('pat_encrypted');
+        $previousSync = $legacy->last_synced_at->toDateTimeString();
+
+        $issues = [$this->githubIssue(801)];
+
+        try {
+            $this->import(
+                $project,
+                $owner,
+                $legacy->id,
+                $issues,
+                $this->fingerprint($project, $issues)
+            );
+
+            $this->fail('Konfigurasi PAT tidak boleh mengizinkan impor.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey(
+                'github',
+                $exception->errors()
+            );
+        }
+
+        $this->assertDatabaseCount('github_app_connections', 0);
+        $this->assertDatabaseCount('github_configs', 1);
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
+
+        $this->assertDatabaseMissing('activity_logs', [
+            'action' => 'IMPORT_GITHUB',
+            'project_id' => $project->id,
+        ]);
+
+        $this->assertTrue(hash_equals(
+            $encrypted,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        $this->assertSame(
+            $previousSync,
+            $legacy->fresh()->last_synced_at->toDateTimeString()
+        );
+
+        Bus::assertNothingDispatched();
     }
 
     public function test_missing_github_configuration_rejects_import(): void

@@ -13,6 +13,22 @@ class GithubAppConnection extends Model
     // oleh backend setelah proses verifikasi GitHub.
     protected $guarded = ['*'];
 
+    protected $attributes = [
+        'status_sync_generation' => 1,
+    ];
+
+    protected static function booted(): void
+    {
+        static::updating(function (self $connection): void {
+            if ($connection->isDirty([
+                'installation_id', 'repository_id', 'repo_full_name',
+            ])) {
+                $connection->status_sync_generation =
+                    max(1, (int) $connection->getOriginal('status_sync_generation')) + 1;
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [
@@ -21,6 +37,7 @@ class GithubAppConnection extends Model
             'repository_id' => 'integer',
             'verified_github_user_id' => 'integer',
             'verified_at' => 'datetime',
+            'last_synced_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

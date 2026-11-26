@@ -207,7 +207,7 @@ class GithubApiClientTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage(
-            'GitHub PAT is invalid, expired, or revoked.'
+            'GitHub installation token is invalid, expired, or revoked.'
         );
 
         (new GithubApiClient())

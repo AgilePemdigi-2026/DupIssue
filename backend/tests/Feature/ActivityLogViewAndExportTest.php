@@ -853,7 +853,7 @@ class ActivityLogViewAndExportTest extends TestCase
             ->assertSee("#{$issue->id}");
     }
 
-    public function test_real_csv_github_pat_and_github_app_producers_display_on_activity_log(): void
+    public function test_real_csv_and_github_app_producers_and_historical_pat_log_display_on_activity_log(): void
     {
         \Illuminate\Support\Facades\Bus::fake();
 
@@ -868,23 +868,21 @@ class ActivityLogViewAndExportTest extends TestCase
         $parsedCsv = app(\App\Services\CsvIssueReader::class)->read($file);
         app(\App\Services\CsvIssueImportService::class)->import($project, $owner, $parsedCsv, 'issues.csv');
 
-        // 2. Real GitHub PAT Import producer
-        $config = new \App\Models\GithubConfig();
-        $config->project_id = $project->id;
-        $config->repo_full_name = 'acme/pat-repo';
-        $config->pat_encrypted = 'encrypted_pat_value';
-        $config->save();
+        // 2. Historical GitHub PAT activity retained after retirement.
+        $historicalPayload = json_encode([
+            'repo_full_name' => 'acme/pat-repo',
+        ], JSON_THROW_ON_ERROR);
 
-        $patIssues = [
-            [
-                'number' => 11,
-                'title' => 'Bug dari GitHub PAT',
-                'body' => 'Deskripsi bug dari GitHub PAT yang cukup panjang untuk validasi.',
-            ],
-        ];
-        $patPreview = app(\App\Services\GithubIssuePreviewService::class)->preview($project, 'acme/pat-repo', $patIssues);
-        $patFingerprint = hash('sha256', json_encode($patPreview['rows'], JSON_THROW_ON_ERROR));
-        app(\App\Services\GithubIssueImportService::class)->import($project, $owner, $config->id, 'acme/pat-repo', $patIssues, $patFingerprint);
+        $historicalLogId = \Illuminate\Support\Facades\DB::table('activity_logs')
+            ->insertGetId([
+                'project_id' => $project->id,
+                'user_id' => $owner->id,
+                'issue_id' => null,
+                'action' => 'IMPORT_GITHUB',
+                'old_values' => null,
+                'new_values' => $historicalPayload,
+                'created_at' => now()->subDay(),
+            ]);
 
         // 3. Real GitHub App Import producer
         $appConn = new \App\Models\GithubAppConnection();
@@ -907,7 +905,23 @@ class ActivityLogViewAndExportTest extends TestCase
         $appFingerprint = hash('sha256', json_encode($appPreview['rows'], JSON_THROW_ON_ERROR));
         app(\App\Services\GithubIssueImportService::class)->importFromApp($project, $owner, $appConn->id, 99911, 88822, 'acme/app-repo', $appIssues, $appFingerprint);
 
-        // Verify all 3 appear on Activity Log under ISSUE_SOURCE and lastSync is updated
+        // Both the historical audit and the real App import must exist.
+        $this->assertSame(
+            2,
+            \Illuminate\Support\Facades\DB::table('activity_logs')
+                ->where('project_id', $project->id)
+                ->where('action', 'IMPORT_GITHUB')
+                ->count()
+        );
+
+        $this->assertDatabaseHas('activity_logs', [
+            'id' => $historicalLogId,
+            'project_id' => $project->id,
+            'action' => 'IMPORT_GITHUB',
+            'new_values' => $historicalPayload,
+        ]);
+
+        // Verify real producers and historical activity remain visible.
         $response = $this->actingAs($owner)
             ->get(route('projects.activity.index', ['project' => $project, 'category' => 'ISSUE_SOURCE']))
             ->assertOk()

@@ -92,6 +92,380 @@ class GithubAppRepositoryReplacementTest extends TestCase
         ]);
     }
 
+    public function test_legacy_pat_does_not_block_confirmed_app_repository_replacement(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        // Simulate an existing project with both authentication methods.
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/old-repo';
+        $legacy->pat_encrypted = 'fake-legacy-pat-for-testing';
+        $legacy->last_synced_at = now()->subDay();
+        $legacy->save();
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+
+        $this->mockToken();
+
+        $pageUrl = route('sources.index', [
+            'project' => $project->id,
+        ]);
+
+        $response = $this->actingAs($owner)
+            ->withSession($this->verified($owner, $project, $old))
+            ->post($this->routeFor($project), [
+                'repository_id' => 333,
+                'confirm_replace' => '1',
+            ]);
+
+        // Legacy PAT must not prevent a verified and confirmed replacement.
+        $response->assertRedirect($pageUrl);
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'installation_id' => 111,
+            'repository_id' => 333,
+            'repo_full_name' => 'example/new-repo',
+        ]);
+
+        // Preserve legacy configuration without modifying its credentials.
+        $this->assertDatabaseHas('github_configs', [
+            'id' => $legacy->id,
+            'project_id' => $project->id,
+            'repo_full_name' => 'example/old-repo',
+        ]);
+
+        $this->assertTrue(
+            hash_equals(
+                $encryptedPat,
+                $legacy->fresh()->getRawOriginal('pat_encrypted')
+            ),
+            'Legacy encrypted credential must remain unchanged.'
+        );
+
+        $response->assertSessionMissing(
+            'source_issue.github_app_verified_repositories'
+        );
+    }
+
+    public function test_active_github_app_has_no_legacy_pat_endpoints(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/old-repo';
+        $legacy->pat_encrypted = 'fake-legacy-pat';
+        $legacy->save();
+
+        $encryptedPat = $legacy->getRawOriginal('pat_encrypted');
+
+        Http::fake();
+
+        $credentials = [
+            'repo_full_name' => 'example/old-repo',
+            'pat' => 'fake-replacement-pat',
+        ];
+
+        $this->actingAs($owner);
+
+        $this->postJson(
+            "/projects/{$project->id}/sources/github/test",
+            $credentials
+        )->assertNotFound();
+
+        $this->postJson(
+            "/projects/{$project->id}/sources/github/save",
+            $credentials
+        )->assertNotFound();
+
+        $this->postJson(
+            "/projects/{$project->id}/sources/github/preview"
+        )->assertNotFound();
+
+        $this->postJson(
+            "/projects/{$project->id}/sources/github/import",
+            ['confirmed' => true]
+        )->assertNotFound();
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertTrue(hash_equals(
+            $encryptedPat,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        Http::assertNothingSent();
+    }
+
+    public function test_active_github_app_cannot_import_from_legacy_repository(): void
+    {
+        [$owner, $project, $connection] = $this->setupConnection();
+
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $legacy = new \App\Models\GithubConfig();
+        $legacy->project_id = $project->id;
+        $legacy->repo_full_name = 'example/legacy-repo';
+        $legacy->pat_encrypted = 'fake-retired-pat';
+        $legacy->save();
+
+        $encrypted = $legacy->getRawOriginal('pat_encrypted');
+
+        $issues = [[
+            'number' => 1,
+            'title' => 'A valid legacy repository issue',
+            'body' => 'This issue must not be imported through a retired connection.',
+        ]];
+
+        $preview = app(GithubIssuePreviewService::class)->preview(
+            $project,
+            $legacy->repo_full_name,
+            $issues
+        );
+
+        $fingerprint = hash(
+            'sha256',
+            json_encode($preview['rows'], JSON_THROW_ON_ERROR)
+        );
+
+        $service = app(\App\Services\GithubIssueImportService::class);
+
+        $this->assertFalse(method_exists($service, 'import'));
+
+        try {
+            $service->importFromApp(
+                $project,
+                $owner,
+                $connection->id,
+                111,
+                222,
+                $legacy->repo_full_name,
+                $issues,
+                $fingerprint
+            );
+
+            $this->fail('Repository PAT lama tidak boleh digunakan.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertArrayHasKey('github', $exception->errors());
+        }
+
+        $this->assertDatabaseCount('issues', 0);
+        $this->assertDatabaseCount('import_batches', 0);
+        $this->assertDatabaseCount('github_configs', 1);
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        $this->assertSame(
+            'example/old-repo',
+            $connection->fresh()->repo_full_name
+        );
+
+        $this->assertTrue(hash_equals(
+            $encrypted,
+            $legacy->fresh()->getRawOriginal('pat_encrypted')
+        ));
+
+        \Illuminate\Support\Facades\Bus::assertNothingDispatched();
+        Http::assertNothingSent();
+    }
+
+    private function cancelRouteFor(Project $project): string
+    {
+        return "/projects/{$project->id}/sources/github/app/cancel";
+    }
+
+    public function test_cancel_clears_pending_selection_without_changing_connection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        Http::fake();
+
+        $before = $old->fresh()->getRawOriginal();
+
+        $pending = $this->verified($owner, $project, $old);
+
+        $scope = [
+            'project_id' => (int) $project->id,
+            'actor_id' => (int) $owner->id,
+            'expires_at' => now()->addMinutes(10)->timestamp,
+        ];
+
+        $pending['source_issue.github_app_oauth'] = $scope;
+        $pending['source_issue.github_app_pending_oauth'] = $scope;
+        $pending['source_issue.github_app_install'] = $scope;
+
+        $csvPreview = $scope + ['marker' => 'keep-csv'];
+        $appPreview = $scope + ['marker' => 'keep-app'];
+        $legacyPreview = $scope + ['marker' => 'keep-legacy'];
+
+        $pending['source_issue.csv_preview'] = $csvPreview;
+        $pending['source_issue.github_app_preview'] = $appPreview;
+        $pending['source_issue.github_preview'] = $legacyPreview;
+
+        $page = route('sources.index', [
+            'project' => $project->id,
+        ]);
+
+        $this->actingAs($owner)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($project))
+            ->assertRedirect($page)
+            ->assertSessionMissing(
+                'source_issue.github_app_verified_repositories'
+            )
+            ->assertSessionMissing(
+                'source_issue.github_app_oauth'
+            )
+            ->assertSessionMissing(
+                'source_issue.github_app_pending_oauth'
+            )
+            ->assertSessionMissing(
+                'source_issue.github_app_install'
+            )
+            ->assertSessionHas(
+                'source_issue.csv_preview', $csvPreview
+            )
+            ->assertSessionHas(
+                'source_issue.github_app_preview', $appPreview
+            )
+            ->assertSessionHas(
+                'source_issue.github_preview', $legacyPreview
+            );
+
+        $this->assertSame(
+            $before,
+            $old->fresh()->getRawOriginal()
+        );
+
+        $this->get($page)
+            ->assertOk()
+            ->assertDontSee('id="github-app-repository"', false);
+
+        // A previously rendered confirmation must no longer work.
+        $this->post($this->routeFor($project), [
+            'repository_id' => 333,
+            'confirm_replace' => '1',
+        ])->assertForbidden();
+
+        $this->assertSame(
+            $before,
+            $old->fresh()->getRawOriginal()
+        );
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_does_not_clear_another_projects_selection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $otherProject = Project::factory()->create([
+            'owner_id' => $owner->id,
+        ]);
+
+        Http::fake();
+
+        $pending = $this->verified($owner, $project, $old);
+
+        $key = 'source_issue.github_app_verified_repositories';
+
+        $this->actingAs($owner)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($otherProject))
+            ->assertRedirect(route('sources.index', [
+                'project' => $otherProject->id,
+            ]))
+            ->assertSessionHas($key, $pending[$key]);
+
+        $this->assertSame(
+            222,
+            (int) $old->fresh()->repository_id
+        );
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_does_not_clear_another_actors_selection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $anotherActor = User::factory()->create([
+            'role' => 'MAINTAINER',
+        ]);
+
+        Http::fake();
+
+        $pending = $this->verified(
+            $anotherActor, $project, $old
+        );
+
+        $key = 'source_issue.github_app_verified_repositories';
+
+        $this->actingAs($owner)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($project))
+            ->assertRedirect(route('sources.index', [
+                'project' => $project->id,
+            ]))
+            ->assertSessionHas($key, $pending[$key]);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_rejects_non_owner_maintainer(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        $other = User::factory()->create([
+            'role' => 'MAINTAINER',
+        ]);
+
+        Http::fake();
+
+        $pending = $this->verified($owner, $project, $old);
+
+        $key = 'source_issue.github_app_verified_repositories';
+
+        $this->actingAs($other)
+            ->withSession($pending)
+            ->post($this->cancelRouteFor($project))
+            ->assertForbidden()
+            ->assertSessionHas($key, $pending[$key]);
+
+        $this->assertSame(
+            222,
+            (int) $old->fresh()->repository_id
+        );
+
+        Http::assertNothingSent();
+    }
+
+    public function test_cancel_button_targets_an_independent_form(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+
+        Http::fake();
+
+        $this->actingAs($owner)
+            ->withSession($this->verified($owner, $project, $old))
+            ->get(route('sources.index', [
+                'project' => $project->id,
+            ]))
+            ->assertOk()
+            ->assertSee('Konfirmasi Ganti Repository')
+            ->assertSee('id="github-app-cancel-selection"', false)
+            ->assertSee('form="github-app-cancel-selection"', false)
+            ->assertSee($this->cancelRouteFor($project), false);
+
+        Http::assertNothingSent();
+    }
+
     public function test_replacement_requires_explicit_consent(): void
     {
         [$owner, $project, $old] = $this->setupConnection();
@@ -206,6 +580,70 @@ class GithubAppRepositoryReplacementTest extends TestCase
                         'id' => 111,
                         'app_id' => 1234,
                         'permissions' => ['issues' => 'read'],
+                        'suspended_at' => null,
+                    ]],
+                ], 200),
+            'https://api.github.com/user/installations/111/repositories?*' =>
+                Http::response([
+                    'total_count' => 1,
+                    'repositories' => [[
+                        'id' => 333,
+                        'full_name' => 'example/new-repo',
+                    ]],
+                ], 200),
+        ]);
+
+        $session = [
+            'source_issue.github_app_oauth' => [
+                'state_hash' => hash('sha256', $state),
+                'code_verifier' => str_repeat('v', 43),
+                'project_id' => (int) $project->id,
+                'actor_id' => (int) $owner->id,
+                'installation_id' => null,
+                'expected_connection' => $this->snapshot($old),
+                'expires_at' => now()->addMinutes(10)->timestamp,
+            ],
+        ];
+
+        $response = $this->actingAs($owner)
+            ->withSession($session)
+            ->get(route('sources.github.app.callback', [
+                'state' => $state,
+                'code' => 'safe_code',
+            ]));
+        $response->assertRedirect(route('sources.index', [
+            'project' => $project->id,
+        ]));
+        $response->assertSessionHas(
+            'source_issue.github_app_verified_repositories',
+            fn ($data) => count($data['repositories']) === 1
+                && $data['repositories'][0]['id'] === 333
+        );
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'repository_id' => 222,
+        ]);
+    }
+
+    public function test_github_callback_with_write_permission_keeps_existing_connection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+        $state = str_repeat('a', 64);
+        Http::fake([
+            'https://github.com/login/oauth/access_token' =>
+                Http::response([
+                    'access_token' => 'fake-user-token',
+                    'token_type' => 'bearer',
+                ], 200),
+            'https://api.github.com/user' =>
+                Http::response(['id' => 999, 'login' => 'example-user'], 200),
+            'https://api.github.com/user/installations?*' =>
+                Http::response([
+                    'total_count' => 1,
+                    'installations' => [[
+                        'id' => 111,
+                        'app_id' => 1234,
+                        'permissions' => ['issues' => 'write'],
                         'suspended_at' => null,
                     ]],
                 ], 200),

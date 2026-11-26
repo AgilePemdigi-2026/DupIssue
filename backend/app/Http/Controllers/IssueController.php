@@ -201,7 +201,11 @@ class IssueController extends Controller
             ->whereHas('candidateIssue', fn ($query) => $query->where('project_id', $project->getKey()))
             ->with('candidateIssue')
             ->orderByDesc('similarity_score')
-            ->limit(10)
+            ->when(
+                $issue->source_type === 'CSV',
+                fn ($query) => $query->orderBy('candidate_issue_id')
+            )
+            ->limit($issue->source_type === 'CSV' ? 3 : 10)
             ->get();
 
         $reviewHistory = collect();
@@ -214,9 +218,12 @@ class IssueController extends Controller
 
         $statusHistory = $this->statusHistory($project, $issue);
 
+        $githubSync = app(\App\Services\GithubIssueSyncStateService::class)
+            ->describe($project, $issue);
+
         return view('issues.show', compact(
             'project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory',
-            'parentIssue', 'votingIssue', 'canVote', 'hasVoted'
+            'parentIssue', 'votingIssue', 'canVote', 'hasVoted', 'githubSync'
         ));
     }
 

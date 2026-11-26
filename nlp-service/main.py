@@ -5,9 +5,13 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, StrictInt, StrictStr, field_validator
 from sentence_transformers import SentenceTransformer, util
+from embedding_cache import EmbeddingCache
 
 
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+# Pin the already validated snapshot; a new revision requires review/restart.
+MODEL_REVISION = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42"
+MODEL_IDENTITY = f"{MODEL_NAME}@{MODEL_REVISION}:title-description-v1"
 logger = logging.getLogger(__name__)
 
 
@@ -81,7 +85,8 @@ def ids_match(first: IssueId, second: IssueId) -> bool:
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Load the NLP model once when the application starts."""
     try:
-        application.state.model = SentenceTransformer(MODEL_NAME, device="cpu")
+        application.state.model = SentenceTransformer(MODEL_NAME, revision=MODEL_REVISION, device="cpu")
+        application.state.embedding_cache = EmbeddingCache()
     except Exception:
         logger.exception("Could not load the NLP model.")
         raise RuntimeError("NLP model could not be loaded.") from None
@@ -106,11 +111,12 @@ def compare_similarity(payload: SimilarityRequest, request: Request):
     """Return a semantic similarity score for two issues."""
     try:
         texts = [combine_issue_text(payload.issue1), combine_issue_text(payload.issue2)]
-        embeddings = request.app.state.model.encode(
-            texts,
-            convert_to_tensor=True,
-            show_progress_bar=False,
-        )
+        with request.app.state.embedding_cache.inference():
+            embeddings = request.app.state.model.encode(
+                texts,
+                convert_to_tensor=True,
+                show_progress_bar=False,
+            )
         score = float(util.cos_sim(embeddings[0], embeddings[1]).item())
     except Exception:
         logger.exception("Could not calculate issue similarity.")
@@ -137,11 +143,9 @@ def find_candidates(payload: CandidatesRequest, request: Request):
 
     try:
         issues = [payload.new_issue, *eligible_candidates]
-        texts = [combine_issue_text(issue) for issue in issues]
-        embeddings = request.app.state.model.encode(
-            texts,
-            convert_to_tensor=True,
-            show_progress_bar=False,
+        embeddings = request.app.state.embedding_cache.encode(
+            request.app.state.model, MODEL_IDENTITY, payload.project_id,
+            issues, combine_issue_text,
         )
         scores = util.cos_sim(embeddings[0], embeddings[1:])[0].tolist()
         results = [

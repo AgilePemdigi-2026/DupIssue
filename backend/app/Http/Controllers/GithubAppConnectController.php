@@ -15,6 +15,55 @@ use App\Services\GithubAppJwtService;
 
 class GithubAppConnectController extends Controller
 {
+    /**
+     * Cancel pending GitHub App authorization for this owner and project.
+     * Never change the active repository or historical issue data.
+     */
+    public function cancelConnection(
+        Request $request,
+        Project $project
+    ): RedirectResponse {
+        $user = $request->user();
+
+        abort_unless(
+            $user
+                && $user->role === 'MAINTAINER'
+                && (int) $project->owner_id === (int) $user->id,
+            403,
+            'Hanya Maintainer pemilik project yang diizinkan.'
+        );
+
+        $keys = [
+            'source_issue.github_app_verified_repositories',
+            'source_issue.github_app_oauth',
+            'source_issue.github_app_pending_oauth',
+            'source_issue.github_app_install',
+        ];
+
+        foreach ($keys as $key) {
+            $pending = $request->session()->get($key);
+
+            if (
+                is_array($pending)
+                && ($pending['project_id'] ?? null) === (int) $project->id
+                && ($pending['actor_id'] ?? null) === (int) $user->id
+            ) {
+                $request->session()->forget($key);
+            }
+        }
+
+        return redirect()
+            ->route('sources.index', [
+                'project' => $project->id,
+            ])
+            ->with(
+                'success',
+                'Pemilihan repository GitHub dibatalkan. '
+                . 'Koneksi sebelumnya tidak berubah.'
+            )
+            ->header('Cache-Control', 'no-store');
+    }
+
     public function saveConnection(
         Request $request,
         Project $project,
@@ -115,7 +164,21 @@ class GithubAppConnectController extends Controller
             || strcasecmp($before->repo_full_name, $repoFullName) !== 0
         );
 
-        if ($replacement) {
+        $legacyMigration = false;
+
+        if ($before === null) {
+            $legacySnapshot = $this->legacyPatSnapshot($project);
+
+            abort_unless(
+                $legacySnapshot === ($pending['expected_legacy_pat'] ?? null),
+                409,
+                'Konfigurasi GitHub lama berubah. Ulangi otorisasi GitHub.'
+            );
+
+            $legacyMigration = $legacySnapshot !== null;
+        }
+
+        if ($replacement || $legacyMigration) {
             $request->validate([
                 'confirm_replace' => ['required', 'accepted'],
             ]);
@@ -161,7 +224,11 @@ class GithubAppConnectController extends Controller
         );
 
         // Perubahan database dilakukan hanya setelah verifikasi API.
-        DB::transaction(function () use (
+        $mutex = \App\Services\GithubStatusSyncMutex::acquire();
+        abort_if($mutex === null, 409, 'Sinkronisasi sedang berlangsung. Coba lagi.');
+
+        try {
+            DB::transaction(function () use (
             $project,
             $user,
             $pending,
@@ -180,21 +247,28 @@ class GithubAppConnectController extends Controller
                 'Kepemilikan project telah berubah.'
             );
 
-            $patRepository = GithubConfig::query()
-                ->where('project_id', $project->id)
-                ->value('repo_full_name');
-
-            abort_if(
-                is_string($patRepository)
-                    && strcasecmp($patRepository, $repoFullName) !== 0,
-                409,
-                'Project ini sudah menggunakan repository GitHub lain melalui PAT.'
-            );
-
             $connection = GithubAppConnection::query()
                 ->where('project_id', $project->id)
                 ->lockForUpdate()
                 ->first();
+
+            // Validate migration again under the project lock.
+            // Keep historical PAT configuration unchanged.
+            if ($connection === null) {
+                $legacySnapshot = $this->legacyPatSnapshot($lockedProject);
+
+                abort_unless(
+                    $legacySnapshot === ($pending['expected_legacy_pat'] ?? null),
+                    409,
+                    'Konfigurasi GitHub lama berubah. Ulangi otorisasi GitHub.'
+                );
+
+                abort_unless(
+                    $legacySnapshot === null || $confirmedReplace,
+                    422,
+                    'Migrasi koneksi PAT ke GitHub App harus dikonfirmasi.'
+                );
+            }
 
             // Detect concurrent changes made after OAuth was started.
             // The legacy setup callback has no snapshot: preserve its behavior.
@@ -249,8 +323,18 @@ class GithubAppConnectController extends Controller
 
             $connection->verified_at = now();
 
+            // A new connection or repository replacement has not
+            // synchronized any issues from its newly selected source.
+            // Reauthorization of the same connection keeps its history.
+            if (! $connection->exists || $isChanging) {
+                $connection->last_synced_at = null;
+            }
+
             $connection->save();
-        });
+            });
+        } finally {
+            $mutex->release();
+        }
 
         // Hanya hapus sesi verifikasi setelah database berhasil
         // menyimpan koneksi.
@@ -454,8 +538,11 @@ class GithubAppConnectController extends Controller
                         (string) ($installation['app_id'] ?? '')
                             !== (string) config('services.github_app.app_id')
                         || ($installation['suspended_at'] ?? null) !== null
-                        || ($installation['permissions']['issues'] ?? null)
-                            !== 'read'
+                        || ! in_array(
+                            $installation['permissions']['issues'] ?? null,
+                            ['read', 'write'],
+                            true
+                        )
                     ) {
                         continue;
                     }
@@ -551,6 +638,8 @@ class GithubAppConnectController extends Controller
                 'Tidak ada repository yang dapat diakses melalui GitHub App.'
             );
 
+            $legacySnapshot = $this->legacyPatSnapshot($project);
+
             $request->session()->put(
                 'source_issue.github_app_verified_repositories',
                 [
@@ -563,6 +652,7 @@ class GithubAppConnectController extends Controller
                     'github_user_id' => $identity->json('id'),
                     'repositories' => array_values($verified),
                     'expected_connection' => $pending['expected_connection'] ?? null,
+                    'expected_legacy_pat' => $legacySnapshot,
                     'expires_at' => now()->addMinutes(10)->timestamp,
                 ]
             );
@@ -591,7 +681,10 @@ class GithubAppConnectController extends Controller
         if (
             $pending['installation_id'] === null
             && count($verified) === 1
-            && ($connected === null || $sameRepository)
+            && (
+                ($connected === null && $legacySnapshot === null)
+                || $sameRepository
+            )
         ) {
             // User initiated the link; one accessible repository needs
             // no further selection. Reuse saveConnection's scoped token,
@@ -963,4 +1056,24 @@ class GithubAppConnectController extends Controller
 
         return $response;
     }
+
+    /**
+     * Read only legacy repository metadata, never its credential.
+     */
+    private function legacyPatSnapshot(Project $project): ?array
+    {
+        $legacy = GithubConfig::query()
+            ->where('project_id', $project->id)
+            ->first(['id', 'repo_full_name']);
+
+        if ($legacy === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $legacy->id,
+            'repo_full_name' => $legacy->repo_full_name,
+        ];
+    }
+
 }

@@ -4,6 +4,40 @@ Layanan API sederhana berbasis FastAPI untuk menghitung kemiripan semantik antar
 
 > Layanan hanya menghasilkan skor kemiripan. Layanan tidak memutuskan apakah issue berstatus `DUPLICATE`; keputusan tersebut tetap menjadi kewenangan Maintainer.
 
+## F2 experimental embedding cache — pending Technical Lead review
+
+Model tetap sama, dipin ke revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`
+yang sudah divalidasi. Request/response API, cosine signed, normalisasi teks,
+ranking dan threshold Laravel tidak berubah. Cache hanya mengurangi encoding ulang;
+tidak menjadi index issue atau sumber authorization.
+
+- Key memisahkan model/revision/format teks, project ID, issue ID, serta hash exact
+  title dan description setelah strip existing. Edit konten mengganti entry pada
+  akses berikutnya; versi lama tidak dapat dipakai untuk konten baru.
+- Hanya kandidat dalam request yang dapat dikembalikan. Delete, pergantian repository,
+  atau membership removal tidak menghidupkan issue dari cache. Laravel tetap membaca
+  kandidat dan memverifikasi authorization/project pada setiap request.
+- LRU per proses: maksimal 10.000 entries dan 32 MiB accounted storage, termasuk
+  vector bytes + allowance metadata 1 KiB/entry. Bukan batas seluruh RSS proses.
+  Tidak menyimpan raw text, ID mentah, atau vector pada disk. Vector clone tidak
+  mempertahankan storage seluruh batch. TTL absolut 900 detik, dipurge pada request
+  cache berikutnya; saat idle, entries dapat tetap berada dalam RAM sampai akses/restart.
+- Satu lock inference untuk `/candidates` dan `/similarity`, dengan waktu tunggu
+  maksimal 2 detik. Overload mengembalikan generic 503 existing; queue memiliki retry.
+  Cold inference dapat memblokir request hangat dari project lain selama periode ini.
+- Restart mengosongkan cache. Setiap Uvicorn process memiliki cache/model sendiri;
+  menambah worker menggandakan memory dan membutuhkan warmup masing-masing.
+- Encoding miss tetap batched dengan default model (32), float precision existing;
+  cosine sudah vectorized sebelum optimasi. Tidak ada quantization, pruning, ANN,
+  perubahan model, atau kenaikan timeout production.
+
+Benchmark lokal memakai CPU 2 threads (`OMP_NUM_THREADS=2`, `MKL_NUM_THREADS=2`),
+offline shared Hugging Face cache. Cold-cache 5.000 issues masih melewati target
+3 detik/default timeout 10 detik. Prewarming chunk terisolasi dievaluasi melalui
+API existing, **belum** dipasang sebagai lifecycle production. Jangan menyatakan
+target SRS tercapai hanya dari warm-cache. Bukti dan cara reproduksi:
+[F2 performance report](../docs/NLP_PERFORMANCE_REPORT.md).
+
 ## Persyaratan
 
 - Python 3.12
@@ -132,7 +166,7 @@ Jika tidak ada kandidat yang dapat dibandingkan, responsnya `{"candidates": []}`
 ### Validasi dan error
 
 - Request dengan field wajib yang hilang, format tidak sesuai, atau teks `title`/`description` kosong menghasilkan HTTP `422`.
-- Jika terjadi kegagalan internal saat menghitung similarity, endpoint mengembalikan HTTP `500` dengan pesan umum; detail teknis dicatat di log server dan tidak dikirim dalam respons.
+- Jika terjadi kegagalan internal atau kapasitas inference sedang penuh, endpoint mengembalikan HTTP `503` dengan pesan umum; detail teknis dicatat di log server dan tidak dikirim dalam respons.
 
 ## Menjalankan unit test
 

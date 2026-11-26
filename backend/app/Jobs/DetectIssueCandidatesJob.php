@@ -148,9 +148,22 @@ class DetectIssueCandidatesJob implements ShouldQueue
             ];
         }
 
-        usort($valid, fn (array $left, array $right): int => $right['similarity_score'] <=> $left['similarity_score']);
+        usort($valid, static function (array $left, array $right) use ($issue): int {
+            $comparison = $right['similarity_score'] <=> $left['similarity_score'];
 
-        return array_slice($valid, 0, 10);
+            // Stable CSV ranking when multiple candidates have equal scores.
+            if ($comparison === 0 && $issue->source_type === 'CSV') {
+                return $left['candidate_issue_id'] <=> $right['candidate_issue_id'];
+            }
+
+            return $comparison;
+        });
+
+        // CSV imports retain only the three highest-scoring candidates.
+        // Preserve the existing detection limit for other issue sources.
+        $limit = $issue->source_type === 'CSV' ? 3 : 10;
+
+        return array_slice($valid, 0, $limit);
     }
 
     /** @param array<int, array{candidate_issue_id: int, similarity_score: float}> $results */

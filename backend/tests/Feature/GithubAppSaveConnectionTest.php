@@ -140,6 +140,58 @@ class GithubAppSaveConnectionTest extends TestCase
         );
     }
 
+    public function test_same_repository_reauthorization_preserves_last_synced_at(): void
+    {
+        $connection = new GithubAppConnection();
+        $connection->project_id = $this->project->id;
+        $connection->installation_id = 12345;
+        $connection->repository_id = 5678;
+        $connection->repo_full_name = 'example/test-repo';
+        $connection->verified_github_user_id = 999;
+        $connection->verified_at = now()->subDays(2);
+        $connection->last_synced_at = now()->subDay()->startOfSecond();
+        $connection->save();
+
+        $previousSync = $connection->last_synced_at->toDateTimeString();
+
+        $this->mockTokenService();
+
+        Http::fake([
+            'https://api.github.com/repos/example/test-repo' =>
+                Http::response([
+                    'id' => 5678,
+                    'full_name' => 'example/test-repo',
+                ], 200),
+        ]);
+
+        $pending = $this->pending();
+
+        $pending['expected_connection'] = [
+            'id' => (int) $connection->id,
+            'installation_id' => 12345,
+            'repository_id' => 5678,
+            'repo_full_name' => 'example/test-repo',
+        ];
+
+        $this->actingAs($this->owner)
+            ->withSession([
+                'source_issue.github_app_verified_repositories' => $pending,
+            ])
+            ->post($this->saveUrl(), [
+                'repository_id' => 5678,
+            ])
+            ->assertRedirect(route('sources.index', [
+                'project' => $this->project->id,
+            ]));
+
+        $this->assertSame(
+            $previousSync,
+            $connection->fresh()->last_synced_at->toDateTimeString()
+        );
+
+        $this->assertDatabaseCount('github_app_connections', 1);
+    }
+
     public function test_unverified_repository_is_rejected(): void
     {
         Http::fake();

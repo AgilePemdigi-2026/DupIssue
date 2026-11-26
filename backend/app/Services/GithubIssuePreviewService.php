@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\GithubAppConnection;
 use App\Models\Issue;
 use App\Models\Project;
 use Illuminate\Support\Facades\Validator;
@@ -14,7 +15,7 @@ class GithubIssuePreviewService
      *
      * This method never inserts or updates database records.
      *
-     * @param array<int, mixed> $githubIssues
+     * @param  array<int, mixed>  $githubIssues
      * @return array<string, mixed>
      */
     public function preview(
@@ -77,6 +78,8 @@ class GithubIssuePreviewService
         // Find existing issues in the same project
         // and GitHub repository.
         $existingNumbers = [];
+        $repositoryId = GithubAppConnection::query()->where('project_id', $project->getKey())
+            ->whereRaw('LOWER(repo_full_name) = ?', [strtolower($repoFullName)])->value('repository_id');
 
         foreach (
             array_chunk(array_unique($numbers), 400) as $chunk
@@ -84,10 +87,12 @@ class GithubIssuePreviewService
             $found = Issue::query()
                 ->where('project_id', $project->getKey())
                 ->where('source_type', 'GITHUB')
-                ->whereRaw(
-                    'LOWER(github_repo) = ?',
-                    [strtolower($repoFullName)]
-                )
+                ->where(function ($query) use ($repoFullName, $repositoryId): void {
+                    $query->whereRaw('LOWER(github_repo) = ?', [strtolower($repoFullName)]);
+                    if ($repositoryId) {
+                        $query->orWhere('github_repository_id', $repositoryId);
+                    }
+                })
                 ->whereIn('github_number', $chunk)
                 ->pluck('github_number');
 
@@ -120,9 +125,9 @@ class GithubIssuePreviewService
 
             $sourceUrl = is_int($number) && $number > 0
                 ? 'https://github.com/'
-                    . $repoFullName
-                    . '/issues/'
-                    . $number
+                    .$repoFullName
+                    .'/issues/'
+                    .$number
                 : null;
 
             $data = [
@@ -150,6 +155,7 @@ class GithubIssuePreviewService
 
                 $invalidCount++;
                 $previewRows[] = $result;
+
                 continue;
             }
 
@@ -169,6 +175,7 @@ class GithubIssuePreviewService
 
                 $invalidCount++;
                 $previewRows[] = $result;
+
                 continue;
             }
 

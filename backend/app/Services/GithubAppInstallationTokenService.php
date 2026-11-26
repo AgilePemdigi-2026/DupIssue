@@ -27,6 +27,25 @@ class GithubAppInstallationTokenService
         int $installationId,
         int $repositoryId
     ): string {
+        return $this->createForRepositoryWithPermission(
+            $installationId, $repositoryId, 'read'
+        );
+    }
+
+    public function createForRepositoryWithWriteAccess(
+        int $installationId,
+        int $repositoryId
+    ): string {
+        return $this->createForRepositoryWithPermission(
+            $installationId, $repositoryId, 'write'
+        );
+    }
+
+    private function createForRepositoryWithPermission(
+        int $installationId,
+        int $repositoryId,
+        string $permission
+    ): string {
         if ($installationId <= 0 || $repositoryId <= 0) {
             throw new RuntimeException(
                 'Invalid GitHub installation or repository.'
@@ -52,7 +71,7 @@ class GithubAppInstallationTokenService
                     [
                         'repository_ids' => [$repositoryId],
                         'permissions' => [
-                            'issues' => 'read',
+                            'issues' => $permission,
                         ],
                     ]
                 );
@@ -60,6 +79,13 @@ class GithubAppInstallationTokenService
             throw new RuntimeException(
                 'Unable to connect to GitHub.'
             );
+        }
+
+        if ($response->status() === 429
+            || ($response->status() === 403
+                && ($response->header('X-RateLimit-Remaining') === '0'
+                    || trim((string) $response->header('Retry-After')) !== ''))) {
+            throw GithubStatusRateLimitException::fromResponse($response);
         }
 
         if ($response->status() !== 201) {
@@ -89,12 +115,25 @@ class GithubAppInstallationTokenService
             );
         }
 
+        if ($permission === 'write'
+            && is_array($permissions)
+            && (array_diff(array_keys($permissions), ['issues', 'metadata'])
+                || (isset($permissions['metadata'])
+                    && $permissions['metadata'] !== 'read'))) {
+            throw new RuntimeException(
+                'Unexpected GitHub installation permissions.', 403
+            );
+        }
+
         if (
             ! is_array($permissions)
-            || ($permissions['issues'] ?? null) !== 'read'
+            || ($permissions['issues'] ?? null) !== $permission
         ) {
             throw new RuntimeException(
-                'GitHub installation lacks issue-read permission.'
+                $permission === 'read'
+                    ? 'GitHub installation lacks issue-read permission.'
+                    : 'GitHub installation lacks issue-write permission.',
+                $permission === 'read' ? 0 : 403
             );
         }
 
