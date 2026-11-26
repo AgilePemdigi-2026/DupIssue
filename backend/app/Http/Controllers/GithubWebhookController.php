@@ -40,7 +40,10 @@ class GithubWebhookController extends Controller
         if (! is_array($data) || array_is_list($data)) {
             return $this->reply('INVALID_PAYLOAD', 422);
         }
-        if ($event !== 'issues' || ($data['action'] ?? null) !== 'opened') {
+        $action = $data['action'] ?? null;
+
+        if ($event !== 'issues'
+            || ! in_array($action, ['opened', 'closed', 'reopened'], true)) {
             return $this->reply('IGNORED', 202);
         }
         $installation = $data['installation']['id'] ?? null;
@@ -58,11 +61,12 @@ class GithubWebhookController extends Controller
         }
 
         $hash = hash('sha256', $raw);
-        $delivery = DB::transaction(function () use ($uuid, $hash, $installation, $repository, $number, $connections) {
+        $delivery = DB::transaction(function () use ($uuid, $hash, $installation, $repository, $number, $connections, $action) {
             // The unique UUID is durable across workers, restarts and redelivery.
             $created = DB::table('github_webhook_deliveries')->insertOrIgnore([
                 'delivery_uuid' => $uuid, 'body_hash' => $hash, 'installation_id' => $installation,
-                'repository_id' => $repository, 'issue_number' => $number, 'received_at' => now(),
+                'repository_id' => $repository, 'issue_number' => $number,
+                'action' => $action, 'received_at' => now(),
             ]);
             $row = DB::table('github_webhook_deliveries')->where('delivery_uuid', $uuid)->lockForUpdate()->first();
             if (! $row || ! hash_equals($row->body_hash, $hash)) {
@@ -73,6 +77,7 @@ class GithubWebhookController extends Controller
                     DB::table('github_webhook_tasks')->insert([
                         'delivery_id' => $row->id, 'connection_id' => $connection->id,
                         'project_id' => $connection->project_id, 'repository' => $connection->repo_full_name,
+                        'connection_generation' => $connection->status_sync_generation,
                         'status' => 'RECEIVED', 'created_at' => now(), 'updated_at' => now(),
                     ]);
                 }

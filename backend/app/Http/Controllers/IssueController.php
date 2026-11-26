@@ -202,9 +202,12 @@ class IssueController extends Controller
 
         $statusHistory = $this->statusHistory($project, $issue);
 
+        $githubSync = app(\App\Services\GithubIssueSyncStateService::class)
+            ->describe($project, $issue);
+
         return view('issues.show', compact(
             'project', 'issue', 'recommendations', 'reviewHistory', 'statusHistory',
-            'parentIssue', 'votingIssue', 'canVote', 'hasVoted'
+            'parentIssue', 'votingIssue', 'canVote', 'hasVoted', 'githubSync'
         ));
     }
 

@@ -113,6 +113,25 @@ class DuplicateReviewController extends Controller
         DuplicateCandidate $candidate
     ): RedirectResponse {
         $this->authorizeOwner($request, $project);
+        $mutex = \App\Services\GithubStatusSyncMutex::acquire();
+        if ($mutex === null) {
+            abort(409, 'Sinkronisasi sedang berlangsung. Coba lagi.');
+        }
+
+        try {
+            return $this->decideLocked($request, $project, $issue, $candidate);
+        } finally {
+            $mutex->release();
+        }
+    }
+
+    private function decideLocked(
+        Request $request,
+        Project $project,
+        Issue $issue,
+        DuplicateCandidate $candidate
+    ): RedirectResponse {
+        $this->authorizeOwner($request, $project);
         abort_unless((int) $issue->project_id === (int) $project->id
             && (int) $candidate->issue_id === (int) $issue->id, 404);
 
@@ -209,6 +228,21 @@ class DuplicateReviewController extends Controller
     }
 
     public function cancel(Request $request, Project $project, Issue $issue): RedirectResponse
+    {
+        $this->authorizeOwner($request, $project);
+        $mutex = \App\Services\GithubStatusSyncMutex::acquire();
+        if ($mutex === null) {
+            abort(409, 'Sinkronisasi sedang berlangsung. Coba lagi.');
+        }
+
+        try {
+            return $this->cancelLocked($request, $project, $issue);
+        } finally {
+            $mutex->release();
+        }
+    }
+
+    private function cancelLocked(Request $request, Project $project, Issue $issue): RedirectResponse
     {
         $this->authorizeOwner($request, $project);
         abort_unless((int) $issue->project_id === (int) $project->id, 404);

@@ -1,5 +1,48 @@
 # Traceability SRS dan perubahan scope E5–F
 
+## Feature 5 final checkpoint - 26 November 2026
+
+> This checkpoint supersedes earlier statements concerning
+> current test totals, opened-only webhook scope and required
+> GitHub App permissions. Previous checkpoints are retained
+> as historical records. Merge, deployment and formal
+> acceptance remain pending.
+
+### Feature 5 traceability
+
+| Area | SRS relationship | Acceptance |
+| --- | --- | --- |
+| Explicit Maintainer status changes | REQ-06 | Local QA passed |
+| Existing status transitions | REQ-06 | Regression passed |
+| Status history | REQ-06.11 | Actual QA passed |
+| Failure and retry safeguards | REQ-06.10 and extension | Automated QA passed |
+| Repository identity and isolation | REQ-04 and extension | Actual QA passed |
+| Project authorization | REQ-07.3 | Regression passed |
+| Bidirectional GitHub status synchronization | Additional scope | Formal approval pending |
+
+Bidirectional GitHub state synchronization extends the original
+SRS. Local implementation and verification do not constitute
+formal scope approval.
+
+Duplicate review remains distinct from explicit issue status
+management. A duplicate decision does not automatically imply
+GitHub issue closure.
+
+### Review and release gates
+
+- Technical Lead review of shared controllers, schema changes,
+  locking and queue configuration.
+- NLP optimization review by the responsible Technical Lead.
+- Voting integration review by the responsible module owner.
+- Issue-status and duplicate-review module-owner approval.
+- Formal Product Owner or appropriate course-team acceptance
+  of the additional Feature 5 scope.
+- Production configuration, migration and deployment approval.
+
+See FINAL_QA_REPORT.md for current QA results.
+
+---
+
 ## Final local QA checkpoint — 26 November 2026
 
 ### Final restoration and cleanup status

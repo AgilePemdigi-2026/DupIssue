@@ -1,5 +1,54 @@
 # DupIssue development checkpoint
 
+## Feature 5 final checkpoint - 26 November 2026
+
+> This checkpoint supersedes earlier statements concerning
+> current test totals, opened-only webhook scope and required
+> GitHub App permissions. Previous checkpoints are retained
+> as historical records. Merge, deployment and formal
+> acceptance remain pending.
+
+### Final implementation scope
+
+1. Chrome/Edge native side-panel recommendations, Reporter
+   pairing, voting and automatic GitHub issue ingestion.
+2. CSV top-three duplicate recommendations and 5,000-row
+   import capacity.
+3. GitHub App repository replacement, explicit consent,
+   cancellation and historical repository isolation.
+4. Manual PAT connection and import retirement.
+5. Bidirectional GitHub issue status synchronization.
+
+Feature 5 uses verified repository identity, durable outbound
+intents, inbound webhook tasks, synchronization state,
+connection generation and database-scoped locking.
+
+Only explicit confirmed Maintainer status changes can initiate
+outbound synchronization. Duplicate decisions and automatic
+closure of linked children do not independently create
+outbound intents.
+
+### Final development results
+
+- Eleven existing development commits preserved.
+- 27 source, migration and test files changed for Feature 5.
+- Four new migrations; existing migrations unchanged.
+- 54 dedicated status synchronization tests passed.
+- One additional repository permission regression test passed.
+- Full PHPUnit: 682 tests, 680 passed, 2 skipped,
+  6,409 assertions, zero failures.
+- Actual GitHub integration: 10/10 scenarios passed.
+- Actual MySQL 8.0.46 mutex verification: 11 recorded checks passed.
+- Six isolated runtime services stopped.
+- Temporary GitHub App settings restored by the operator.
+- Evidence retained locally outside tracked Git content.
+
+The implementation is ready for final local review and Draft PR
+preparation. Production deployment and formal scope approval
+remain pending.
+
+---
+
 ## Final local QA checkpoint — 26 November 2026
 
 ### Final restoration and cleanup status

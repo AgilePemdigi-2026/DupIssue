@@ -1,5 +1,66 @@
 # Panduan mencoba FINAL QA lokal
 
+## Feature 5 final checkpoint - 26 November 2026
+
+> This checkpoint supersedes earlier statements concerning
+> current test totals, opened-only webhook scope and required
+> GitHub App permissions. Previous checkpoints are retained
+> as historical records. Merge, deployment and formal
+> acceptance remain pending.
+
+### Feature 5 automated tests
+
+Run only in an appropriately isolated testing environment.
+Do not reuse production or historical database credentials.
+
+    cd backend
+    php artisan test --filter=GithubInboundStatusSynchronizationTest
+    php artisan test --filter=GithubOutboundStatusSynchronizationTest
+    php artisan test --filter=GithubOutboundStatusWorkerTest
+    php artisan test --filter=GithubAppRepositoryReplacementTest
+
+Final PHPUnit verification used an isolated source snapshot,
+SQLite in-memory testing and restricted network access.
+
+### Actual QA summary
+
+- Full PHPUnit: 682 tests, 680 passed, 2 skipped.
+- Actual GitHub integration: 10/10 scenarios passed.
+- Actual MySQL 8.0.46 mutex verification: 11 recorded checks passed.
+- Final queue state: zero pending and zero failed jobs.
+
+The temporary actual QA runtime is no longer running.
+
+### Future live QA prerequisites
+
+Obtain explicit approval for external GitHub writes and use
+dedicated testing repositories.
+
+Use a fresh isolated database, authorized development App,
+protected webhook secret, scoped repository access, queue
+worker and scheduler.
+
+Feature 5 requires Issues read-and-write permission and the
+Issues event subscription. Confirm permission updates have
+been accepted by the installation owner.
+
+The restored read-only development configuration is not
+sufficient for outbound status synchronization.
+
+Verify bidirectional close and reopen, status history,
+webhook redelivery, repository replacement, historical
+repository rejection and automatic new-repository ingestion.
+
+Restore App settings and stop isolated services afterwards.
+Preserve evidence in a Git-ignored local location.
+
+Do not expose credentials or commit private QA databases.
+
+See FINAL_QA_REPORT.md and EXTENSION_SYNC_OPERATIONS.md
+for current results and operational limitations.
+
+---
+
 ## Final local QA checkpoint — 26 November 2026
 
 ### Final restoration and cleanup status

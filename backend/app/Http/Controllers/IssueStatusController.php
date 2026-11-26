@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Issue;
 use App\Models\Project;
+use App\Services\GithubIssueStatusOutboxService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -139,6 +140,21 @@ class IssueStatusController extends Controller
     public function confirm(Request $request, Project $project, Issue $issue): View|RedirectResponse
     {
         $this->authorizeOwner($request, $project, $issue);
+        $mutex = \App\Services\GithubStatusSyncMutex::acquire();
+        if ($mutex === null) {
+            abort(409, 'Sinkronisasi sedang berlangsung. Coba lagi.');
+        }
+
+        try {
+            return $this->confirmLocked($request, $project, $issue);
+        } finally {
+            $mutex->release();
+        }
+    }
+
+    private function confirmLocked(Request $request, Project $project, Issue $issue): View|RedirectResponse
+    {
+        $this->authorizeOwner($request, $project, $issue);
         $key = $this->sessionKey($project, $issue);
         $pending = $request->session()->get($key);
         $token = $request->input('token');
@@ -150,8 +166,16 @@ class IssueStatusController extends Controller
         $autoCloseCount = $pending['auto_close_count'];
         try {
             DB::transaction(function () use ($request, $project, $issue, $pending, $target): void {
+                // Serialize status confirmation with repository replacement
+                // and inbound reconciliation for the same project.
+                $project = Project::query()
+                    ->lockForUpdate()
+                    ->findOrFail($project->id);
+
                 $locked = Issue::query()->lockForUpdate()->findOrFail($issue->id);
-                abort_unless((int) $locked->project_id === (int) $project->id, 404);
+
+                // Revalidate ownership after acquiring the project lock.
+                $this->authorizeOwner($request, $project, $locked);
                 abort_unless($locked->duplicate_of === null
                     && $locked->status === $pending['current_status']
                     && $this->version($locked) === $pending['current_version']
@@ -198,6 +222,17 @@ class IssueStatusController extends Controller
                         ['status' => 'CLOSED', 'duplicate_of' => $locked->id],
                         "Auto-close karena Issue Induk #{$locked->id} berubah menjadi RESOLVED");
                 }
+
+                // Persist only the explicitly confirmed parent/issue intent.
+                // A failed outbox insert rolls back status, children and logs.
+                app(GithubIssueStatusOutboxService::class)->record(
+                    $project,
+                    $locked,
+                    $old,
+                    $target,
+                    (int) $request->user()->id,
+                    $this->statusAuditRevision($project, $locked)
+                );
             }, 3);
         } catch (HttpExceptionInterface $error) {
             throw $error; // Reject conflicts and forbidden updates; do not retry them.

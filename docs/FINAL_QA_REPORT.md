@@ -1,5 +1,134 @@
 # DupIssue — FINAL QA COMPLETION
 
+## Feature 5 final checkpoint - 26 November 2026
+
+> This checkpoint supersedes earlier statements concerning
+> current test totals, opened-only webhook scope and required
+> GitHub App permissions. Previous checkpoints are retained
+> as historical records. Merge, deployment and formal
+> acceptance remain pending.
+
+### Consolidated automated verification
+
+| Metric | Actual result |
+| --- | --- |
+| Dedicated Feature 5 tests | 54 passed |
+| Repository replacement suite | 13 passed |
+| Repository replacement assertions | 81 |
+| Full PHPUnit tests | 682 |
+| Passed | 680 |
+| Skipped | 2 |
+| Failures / errors | 0 / 0 |
+| Assertions | 6,409 |
+| Duration | 18.281 seconds |
+| Peak PHP memory | 84.50 MB |
+| CSV issues imported | 5,000 |
+| CSV database jobs created | 5,000 |
+| CSV import duration | 1.552 seconds |
+| CSV peak memory | 72.50 MB |
+| NLP HTTP requests during import | 0 |
+
+CSV capacity measures import and job creation, not completion
+of the entire asynchronous detection backlog.
+
+### Actual GitHub integration
+
+| ID | Scenario | Result |
+| --- | --- | --- |
+| LIVE-01 | DupIssue to GitHub close | PASS |
+| LIVE-02 | DupIssue to GitHub reopen | PASS |
+| LIVE-03 | GitHub to DupIssue close | PASS |
+| LIVE-04 | GitHub to DupIssue reopen | PASS |
+| LIVE-05 | Status history consistency | PASS |
+| LIVE-06 | Webhook redelivery and idempotency | PASS |
+| LIVE-07 | Repository replacement | PASS |
+| LIVE-08 | Historical repository protection | PASS |
+| LIVE-09 | New repository automatic import and NLP | PASS |
+| LIVE-10 | New repository inbound close and reopen | PASS |
+
+Repository replacement initially exposed a compatibility
+regression: installation discovery accepted only Issues read
+permission and rejected a valid write-enabled installation.
+
+The fix accepts exactly read or write permission while
+preserving App identity, suspension, project ownership and
+repository authorization checks. Read operations retain
+read-scoped tokens.
+
+Actual repository replacement passed after the fix.
+A new regression test reproduced the failure before the fix
+and passed after it. The existing read-permission test was
+preserved. The permanent fix matches the live-tested fix.
+
+Both repositories belonged to the same installation.
+Actual cross-installation replacement and outbound status
+synchronization after replacement were not separately tested.
+
+### Actual MySQL verification
+
+MySQL 8.0.46 ran in a fresh isolated directory using a
+dedicated Unix socket with TCP networking disabled.
+
+Eleven recorded checks passed, covering actual lock
+acquisition, cross-process mutual exclusion, independent
+database locks, release, reacquisition, lost-lock detection,
+changed PDO session detection and process-crash recovery.
+
+Nested acquisition rejection and absence of held database
+transactions were also verified.
+
+The existing MySQL server was not used. This verifies the
+mutex implementation, not sustained concurrent application
+workload.
+
+### Final isolated database
+
+| Table | Rows |
+| --- | --- |
+| issues | 8 |
+| github_webhook_deliveries | 9 |
+| github_webhook_tasks | 9 |
+| github_issue_status_outbox | 2 |
+| github_issue_sync_states | 2 |
+| jobs | 0 |
+| failed_jobs | 0 |
+
+Both outbound intents completed.
+SQLite integrity check passed.
+
+### Evidence and cleanup
+
+The Git-ignored QA archive contains:
+
+- bidirectional-status-results.json
+- final-live-isolation-results.json
+- mysql-status-mutex-results.json
+- oauth-redirect-trace.jsonl
+- installation-discovery-trace.jsonl
+- database.sqlite
+- manifest.json
+
+Source and evidence SHA-256 fingerprints were verified.
+PHPUnit results were recorded from operator terminal output.
+
+GitHub App restoration was confirmed by the operator,
+not independently verified through GitHub API.
+
+All six isolated services stopped, four QA ports were
+released and temporary credential copies were removed.
+
+### Remaining limitations
+
+- Two existing PHPUnit skips remain.
+- Sustained concurrent MySQL application load is unverified.
+- Production migrations and deployment are unverified.
+- Earlier cold-cache NLP performance limitations remain.
+- Actual cross-installation replacement remains unverified.
+- Outstanding module-owner reviews remain applicable.
+- Formal Feature 5 scope approval remains pending.
+
+---
+
 ## Final local QA checkpoint — 26 November 2026
 
 ### Final restoration and cleanup status

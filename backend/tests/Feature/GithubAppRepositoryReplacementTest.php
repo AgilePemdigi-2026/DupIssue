@@ -624,4 +624,68 @@ class GithubAppRepositoryReplacementTest extends TestCase
             'repository_id' => 222,
         ]);
     }
+
+    public function test_github_callback_with_write_permission_keeps_existing_connection(): void
+    {
+        [$owner, $project, $old] = $this->setupConnection();
+        $state = str_repeat('a', 64);
+        Http::fake([
+            'https://github.com/login/oauth/access_token' =>
+                Http::response([
+                    'access_token' => 'fake-user-token',
+                    'token_type' => 'bearer',
+                ], 200),
+            'https://api.github.com/user' =>
+                Http::response(['id' => 999, 'login' => 'example-user'], 200),
+            'https://api.github.com/user/installations?*' =>
+                Http::response([
+                    'total_count' => 1,
+                    'installations' => [[
+                        'id' => 111,
+                        'app_id' => 1234,
+                        'permissions' => ['issues' => 'write'],
+                        'suspended_at' => null,
+                    ]],
+                ], 200),
+            'https://api.github.com/user/installations/111/repositories?*' =>
+                Http::response([
+                    'total_count' => 1,
+                    'repositories' => [[
+                        'id' => 333,
+                        'full_name' => 'example/new-repo',
+                    ]],
+                ], 200),
+        ]);
+
+        $session = [
+            'source_issue.github_app_oauth' => [
+                'state_hash' => hash('sha256', $state),
+                'code_verifier' => str_repeat('v', 43),
+                'project_id' => (int) $project->id,
+                'actor_id' => (int) $owner->id,
+                'installation_id' => null,
+                'expected_connection' => $this->snapshot($old),
+                'expires_at' => now()->addMinutes(10)->timestamp,
+            ],
+        ];
+
+        $response = $this->actingAs($owner)
+            ->withSession($session)
+            ->get(route('sources.github.app.callback', [
+                'state' => $state,
+                'code' => 'safe_code',
+            ]));
+        $response->assertRedirect(route('sources.index', [
+            'project' => $project->id,
+        ]));
+        $response->assertSessionHas(
+            'source_issue.github_app_verified_repositories',
+            fn ($data) => count($data['repositories']) === 1
+                && $data['repositories'][0]['id'] === 333
+        );
+        $this->assertDatabaseHas('github_app_connections', [
+            'project_id' => $project->id,
+            'repository_id' => 222,
+        ]);
+    }
 }

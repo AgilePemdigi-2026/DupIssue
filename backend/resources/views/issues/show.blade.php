@@ -17,6 +17,25 @@
             <p><strong>Status:</strong> <span id="issue-status-value" class="badge di-issue-status" data-status="{{ $issue->status }}">{{ $issue->status }}</span></p>
             <p><strong>Status deteksi NLP:</strong> <span id="issue-detection-status-value">{{ $issue->detection_status }}</span></p>
             <p><strong>Asal data:</strong> {{ ['FORM' => 'Manual', 'CSV' => 'CSV', 'GITHUB' => 'GitHub'][$issue->source_type] ?? $issue->source_type }}</p>
+            @if (!empty($githubSync))
+                <div class="border rounded p-2 mb-3" id="github-sync-indicator">
+                    <strong>Sinkronisasi GitHub:</strong>
+                    <span class="badge bg-{{ $githubSync['style'] }}">
+                        {{ $githubSync['label'] }}
+                    </span>
+                    @if ($githubSync['confirmed_at'])
+                        <div class="small text-muted">
+                            Terverifikasi: {{ $githubSync['confirmed_at'] }}
+                        </div>
+                    @endif
+                    <div class="small text-muted">
+                        Status sinkronisasi saat halaman dimuat.
+                        <a href="{{ route('issues.show', ['project' => $project, 'issue' => $issue]) }}">
+                            Muat ulang
+                        </a>
+                    </div>
+                </div>
+            @endif
             <p><strong>Jumlah vote:</strong> <span id="issue-vote-count-value">{{ (int) $issue->vote_count }}</span></p>
             <div class="d-flex flex-wrap gap-2 align-items-center mb-2 di-actions">
                 <button type="button" class="btn btn-outline-primary btn-sm" id="issue-status-refresh">Muat Ulang</button>

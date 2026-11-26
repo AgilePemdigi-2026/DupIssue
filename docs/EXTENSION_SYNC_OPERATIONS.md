@@ -1,5 +1,109 @@
 # Extension dan GitHub synchronization: arsitektur dan operasi
 
+## Feature 5 final checkpoint - 26 November 2026
+
+> This checkpoint supersedes earlier statements concerning
+> current test totals, opened-only webhook scope and required
+> GitHub App permissions. Previous checkpoints are retained
+> as historical records. Merge, deployment and formal
+> acceptance remain pending.
+
+### Bidirectional status synchronization
+
+Supported inbound GitHub issue actions:
+
+- opened: automatic verified issue ingestion and NLP dispatch.
+- closed: reconcile an existing verified issue status.
+- reopened: reconcile an existing verified issue status.
+
+Status events do not import unknown issues or trigger new NLP
+detection. Historical repository events are rejected after
+replacement. Unsupported actions and pull requests remain
+outside synchronization scope.
+
+### Status projection
+
+| DupIssue status | GitHub state |
+| --- | --- |
+| OPEN | open |
+| IN_PROGRESS | open |
+| RESOLVED | closed |
+| CLOSED | closed |
+| DUPLICATE | Protected from normal synchronization |
+
+Inbound closed events map OPEN and IN_PROGRESS to CLOSED.
+Inbound reopened events map CLOSED to OPEN and RESOLVED to
+IN_PROGRESS. Compatible existing statuses are preserved.
+
+Linked duplicate issues remain protected. Duplicate decisions
+and automatic child closure do not independently initiate
+GitHub status updates.
+
+### Security and consistency
+
+- Project authorization and verified active repository identity.
+- Stable repository ID, issue number, installation and
+  connection generation checks.
+- Webhook HMAC validation and durable delivery deduplication.
+- Repository-scoped installation tokens and verified remote
+  identity for outbound updates.
+- Read-scoped token requests for read operations.
+- Installation discovery accepts read or write Issues permission.
+- Outbound updates require appropriate write permission.
+- Current remote state and pending local intents reduce
+  stale-event effects and feedback loops.
+- Database-scoped nonblocking locking protects supported
+  synchronization and conflicting local mutations.
+
+The mutex is intentionally coarse-grained. Contention can
+produce a busy response or deferred queue processing.
+No database transaction is held by the mutex across HTTP calls.
+
+### Queue and recovery
+
+Durable outbound intents use bounded retries, claim leases,
+stale-generation checks and rate-limit handling.
+
+Recovery command:
+
+    php artisan github:status-recover --limit=100
+
+Periodic recovery is registered in the application scheduler.
+Production queue workers and scheduler supervision are required.
+Review worker timeout and retry-after configuration together.
+
+### GitHub App deployment configuration
+
+- Issues: Read and write.
+- Metadata: Read-only.
+- Issues webhook subscription enabled.
+- Active HTTPS webhook endpoint and matching secret.
+- Correct callback and setup URLs.
+- Approved installation permission update.
+- Access restricted to authorized repositories.
+
+The development App was restored to its original read-only
+and inactive-webhook configuration after actual QA.
+
+Feature 5 live synchronization requires the appropriate App
+configuration and installation authorization before deployment.
+
+Never commit private keys, webhook secrets, access tokens
+or private QA databases.
+
+### Operational limitations
+
+Review the four migrations, production backup, deployment
+sequence, queue recovery and rollback strategy before release.
+
+Do not execute destructive rollback commands on a live
+database without an approved recovery plan.
+
+Asynchronous synchronization does not guarantee instantaneous
+cross-system consistency during external failures.
+
+---
+
 ## Final local QA checkpoint — 26 November 2026
 
 ### Final restoration and cleanup status

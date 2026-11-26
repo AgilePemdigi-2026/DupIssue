@@ -224,7 +224,11 @@ class GithubAppConnectController extends Controller
         );
 
         // Perubahan database dilakukan hanya setelah verifikasi API.
-        DB::transaction(function () use (
+        $mutex = \App\Services\GithubStatusSyncMutex::acquire();
+        abort_if($mutex === null, 409, 'Sinkronisasi sedang berlangsung. Coba lagi.');
+
+        try {
+            DB::transaction(function () use (
             $project,
             $user,
             $pending,
@@ -327,7 +331,10 @@ class GithubAppConnectController extends Controller
             }
 
             $connection->save();
-        });
+            });
+        } finally {
+            $mutex->release();
+        }
 
         // Hanya hapus sesi verifikasi setelah database berhasil
         // menyimpan koneksi.
@@ -531,8 +538,11 @@ class GithubAppConnectController extends Controller
                         (string) ($installation['app_id'] ?? '')
                             !== (string) config('services.github_app.app_id')
                         || ($installation['suspended_at'] ?? null) !== null
-                        || ($installation['permissions']['issues'] ?? null)
-                            !== 'read'
+                        || ! in_array(
+                            $installation['permissions']['issues'] ?? null,
+                            ['read', 'write'],
+                            true
+                        )
                     ) {
                         continue;
                     }

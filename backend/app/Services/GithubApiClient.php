@@ -13,6 +13,90 @@ class GithubApiClient
 
     private const API_VERSION = '2026-03-10';
 
+    /**
+     * Verify repository and issue identity before changing state.
+     * No title, body, label or other fields may be written.
+     */
+    public function updateVerifiedIssueState(
+        string $repository,
+        int $repositoryId,
+        int $number,
+        string $desiredState,
+        string $accessToken,
+        ?callable $guard = null
+    ): array {
+        if (! in_array($desiredState, ['open', 'closed'], true)
+            || $number <= 0 || $number > 4294967295
+            || $repositoryId <= 0
+            || trim($accessToken) === '') {
+            throw new RuntimeException(
+                'Invalid GitHub status update context.', 422
+            );
+        }
+
+        $current = $this->fetchVerifiedIssue($repository, $repositoryId, $number, $accessToken);
+
+        if (! is_int($current['id'] ?? null)
+            || $current['id'] <= 0
+            || array_key_exists('pull_request', $current)) {
+            throw new RuntimeException(
+                'Invalid GitHub issue identity.', 422
+            );
+        }
+
+        if ($guard !== null) {
+            $guard();
+        }
+
+        // Reconcile before retrying an uncertain previous write.
+        if ($current['state'] === $desiredState) {
+            return $current;
+        }
+
+        $path = $this->repositoryPath($repository);
+
+        try {
+            $response = Http::baseUrl(self::BASE_URL)
+                ->accept('application/vnd.github+json')
+                ->asJson()
+                ->withToken($accessToken)
+                ->withHeaders([
+                    'X-GitHub-Api-Version' => self::API_VERSION,
+                    'User-Agent' => 'DupIssue-Laravel',
+                ])
+                ->connectTimeout(5)
+                ->timeout(15)
+                ->withoutRedirecting()
+                ->patch($path.'/issues/'.$number, [
+                    'state' => $desiredState,
+                ]);
+        } catch (ConnectionException $exception) {
+            throw new RuntimeException(
+                'GitHub status update could not be confirmed.', 503
+            );
+        }
+
+        if (! $response->successful()) {
+            $this->handleError($response);
+        }
+
+        $updated = $this->decodeObject($response);
+
+        if ($response->status() !== 200
+            || ($updated['id'] ?? null) !== $current['id']
+            || ($updated['number'] ?? null) !== $number
+            || ($updated['repository_url'] ?? null) !== self::BASE_URL.$path
+            || ($updated['state'] ?? null) !== $desiredState
+            || array_key_exists('pull_request', $updated)) {
+            throw new RuntimeException(
+                'GitHub status update acknowledgement is invalid.', 502
+            );
+        }
+
+        return $updated;
+    }
+
+
     public function fetchVerifiedIssue(string $repository, int $repositoryId, int $number, string $token): array
     {
         if ($repositoryId <= 0 || $number <= 0) {
@@ -260,7 +344,8 @@ class GithubApiClient
             $status === 429
             || (
                 $status === 403
-                && $response->header('X-RateLimit-Remaining') === '0'
+                && ($response->header('X-RateLimit-Remaining') === '0'
+                    || trim((string) $response->header('Retry-After')) !== '')
             )
         ) {
             $message = 'GitHub API rate limit exceeded. Please try again later.';
@@ -273,6 +358,10 @@ class GithubApiClient
             $message = 'GitHub API is temporarily unavailable.';
         } else {
             $message = 'GitHub API request failed.';
+        }
+
+        if ($status === 429) {
+            throw GithubStatusRateLimitException::fromResponse($response);
         }
 
         throw new RuntimeException($message, $status);
