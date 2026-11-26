@@ -122,6 +122,21 @@ services:
         condition: service_healthy
     command: ["php", "artisan", "queue:work", "database", "--queue=default", "--sleep=3", "--tries=1", "--timeout=60", "--no-interaction"]
 
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *app_env
+      MIGRATE_ON_START: "false"
+    volumes:
+      - app_storage:/var/www/html/storage
+    depends_on:
+      web:
+        condition: service_healthy
+    command: ["php", "artisan", "schedule:work", "--no-interaction"]
+
 volumes:
   mysql_data:
   nlp_model_cache:
