@@ -68,6 +68,22 @@ class IssueController extends Controller
             $issue->duplicate_of = null;
             $issue->save();
 
+            DB::table('activity_logs')->insert([
+                'project_id' => $project->getKey(),
+                'user_id' => $request->user()->getKey(),
+                'issue_id' => $issue->getKey(),
+                'action' => 'CREATE_ISSUE',
+                'old_values' => null,
+                'new_values' => json_encode([
+                    'title' => $issue->title,
+                    'source_type' => $issue->source_type,
+                    'status' => $issue->status,
+                ], JSON_THROW_ON_ERROR),
+                'reason' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
             // Callback dijalankan setelah COMMIT; kegagalan antrean tidak menghapus issue.
             DB::afterCommit(function () use ($issue): void {
                 try {

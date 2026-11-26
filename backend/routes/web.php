@@ -2,12 +2,14 @@
 
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\PasswordResetOtpController;
+use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\IssueController;
 use App\Http\Controllers\IssueRecommendationController;
 use App\Http\Controllers\DuplicateReviewController;
 use App\Http\Controllers\IssueStatusController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\ProjectDashboardController;
 use App\Http\Controllers\ProjectMemberController;
 use App\Models\Project;
 use App\Services\ProjectService;
@@ -199,6 +201,16 @@ Route::middleware('auth')->group(function () {
         [IssueStatusController::class, 'confirm'])
         ->middleware('role:MAINTAINER')
         ->name('issues.status.confirm');
+
+    // REQ-07.7 — Riwayat & Log Aktivitas Project (MAINTAINER only)
+    Route::get('/projects/{project}/activity',
+        [ActivityLogController::class, 'index'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.activity.index');
+    Route::get('/projects/{project}/activity/export',
+        [ActivityLogController::class, 'export'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.activity.export');
 });
 
 /*
@@ -209,6 +221,10 @@ Route::middleware('auth')->group(function () {
 */
 
 Route::middleware(['auth'])->group(function () {
+    Route::get('/projects/{project}/dashboard', [ProjectDashboardController::class, 'show'])
+        ->middleware('role:MAINTAINER')
+        ->name('projects.dashboard');
+
     // Project Management
     Route::get('/projects', [ProjectMemberController::class, 'index'])->name('projects.index');
     Route::get('/projects/new', [ProjectMemberController::class, 'create'])->name('projects.create');

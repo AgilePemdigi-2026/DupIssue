@@ -1,0 +1,20 @@
+# Independent Sprint 3 Feature 13 suite; does not edit the shared behat.yml.
+# FeatureContext's BeforeScenario guard REFUSES anything except SQLite :memory:.
+default:
+  extensions:
+    Soulcodex\Behat:
+      kernel:
+        bootstrap_path: '/bootstrap/app.php'
+        environment_path: '.env.behat'
+    Behat\MinkExtension:
+      base_url: http://localhost
+      default_session: laravel
+      laravel: ~
+  suites:
+    sprint3_dashboard:
+      paths:
+        - '%paths.base%/features/sprint3/dashboard'
+      contexts:
+        - Soulcodex\Behat\Addon\RootContext: ~
+        - FeatureContext
+        - Sprint3DashboardBddContext
